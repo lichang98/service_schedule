@@ -83,7 +83,7 @@ std::vector<std::vector<int>> spt_run(std::vector<utils::Task> &tasks, std::vect
     for (int i = 0; i < task_group_progresses.size(); ++i)
         task_group_progresses[i] = 0;
     int env_tm = 0; // time slots
-    printf("Start assigning tasks to experts...");
+    printf("Start assigning tasks to experts...\n");
     printf("Total number of tasks=%d\n", num_left_tasks);
     while (num_left_tasks > 0)
     {
@@ -102,7 +102,6 @@ std::vector<std::vector<int>> spt_run(std::vector<utils::Task> &tasks, std::vect
                         task_group_progresses[i]++;
                         curr_task->start_process_tmpt = env_tm;
                         result.emplace_back(std::vector<int>({curr_task->task_id, experts[expt_idx].id, env_tm}));
-                        num_left_tasks--;
                         break;
                     }
                 }
@@ -111,8 +110,10 @@ std::vector<std::vector<int>> spt_run(std::vector<utils::Task> &tasks, std::vect
         env_tm++;
         // Put forward one time slot
         for (utils::Expert &expt : experts)
+        {
             std::vector<utils::Task *> finish_tasks = expt.update(env_tm);
-        printf("Current time=%d, number of left tasks=%d\n", env_tm, num_left_tasks);
+            num_left_tasks -= finish_tasks.size();
+        }
     }
     return result;
 }
@@ -130,9 +131,20 @@ int main(int argc, char const *argv[])
     std::vector<std::vector<int>> result = spt_run(tasks, experts, group_tasks, group_experts);
     // save result
     time_t date = time(nullptr);
-    tm* date_tm = localtime(&date);
+    tm *date_tm = localtime(&date);
     char result_tm_stamp[50];
-    sprintf(result_tm_stamp,"%02d%02d%02d_%02d%02d%02d.csv",date_tm->tm_year+1900-2000,date_tm->tm_mon+1,date_tm->tm_mday,date_tm->tm_hour,date_tm->tm_min,date_tm->tm_sec);
-    utils::save_result(strcat(utils::PRED_RESULT_PREFIX,result_tm_stamp),result);
+    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000, date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
+    utils::save_result(strcat(utils::PRED_RESULT_PREFIX, result_tm_stamp), result);
+    // Calculating Scores
+    std::vector<double> expt_workloads(experts.size(), 0), task_resp_tmout(tasks.size(), 0), exec_eff(tasks.size(), 0);
+    for (int i = 0; i < tasks.size(); ++i)
+    {
+        task_resp_tmout[i] = metrics::task_response_timeout(tasks[i]);
+        exec_eff[i] = metrics::task_exec_efficiency(tasks[i]);
+    }
+    for (int i = 0; i < experts.size(); ++i)
+        expt_workloads[i] = metrics::expert_workload(experts[i]);
+    double score = metrics::score(expt_workloads, task_resp_tmout, exec_eff);
+    printf("Score=%lf\n", score);
     return 0;
 }

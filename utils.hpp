@@ -90,7 +90,7 @@ namespace utils
             bool is_working = false;
             for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
             {
-                if (process_remains[i] == 0 && process_tasks[i])
+                if (process_remains[i] <= 0 && process_tasks[i])
                 {
                     Task *tsk = process_tasks[i];
                     finish_tasks.push_back(tsk);
@@ -119,8 +119,15 @@ namespace utils
                 return false;
             int task_type = task->type;
             int process_time = process_dura[task_type];
-            process_remains[EXPERT_MAX_PARALLEL - num_avail] = process_time;
-            process_tasks[EXPERT_MAX_PARALLEL - num_avail] = task;
+            for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
+            {
+                if (!process_tasks[i])
+                {
+                    process_remains[i] = process_time;
+                    process_tasks[i] = task;
+                    break;
+                }
+            }
             num_avail--;
             return true;
         }
@@ -166,7 +173,7 @@ namespace utils
         return experts;
     }
 
-    void save_result(char *result_filename,std::vector<std::vector<int>> &result)
+    void save_result(char *result_filename, std::vector<std::vector<int>> &result)
     {
         FILE *fp = fopen(result_filename, "w+");
         for (int i = 0; i < result.size(); ++i)
