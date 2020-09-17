@@ -90,22 +90,21 @@ namespace utils
             bool is_working = false;
             for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
             {
-                if (process_remains[i] <= 0 && process_tasks[i])
+                // FIXME
+                // The recoding of last expert_dura and finish_tmpt may be different if using other strategy
+                if (process_tasks[i])
                 {
+                    is_working = true;
                     Task *tsk = process_tasks[i];
-                    finish_tasks.push_back(tsk);
-                    // FIXME
-                    // The recoding of last expert_dura and finish_tmpt may be different if using other strategy
-                    tsk->each_stay_dura.push_back(this->process_dura[tsk->type]);
-                    tsk->finish_tmpt = tmpt;
-                    process_tasks[i] = nullptr;
-                    num_avail++;
-                    is_working = true;
-                }
-                else if (process_tasks[i])
-                {
                     process_remains[i]--;
-                    is_working = true;
+                    if (process_remains[i] <= 0)
+                    {
+                        finish_tasks.push_back(tsk);
+                        tsk->each_stay_dura.push_back(this->process_dura[tsk->type]);
+                        tsk->finish_tmpt = tmpt;
+                        process_tasks[i] = nullptr;
+                        num_avail++;
+                    }
                 }
             }
             if (is_working)

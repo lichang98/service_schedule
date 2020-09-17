@@ -93,6 +93,9 @@ std::vector<std::vector<int>> spt_run(std::vector<utils::Task> &tasks, std::vect
             {
                 // Try assign task to expert
                 utils::Task *curr_task = group_tasks[i][task_group_progresses[i]];
+                // Task can only be assigned to expert when reaching the generating time stamp
+                if (curr_task->tm_stamp > env_tm)
+                    continue;
                 int task_type = curr_task->type;
                 for (int expt_idx : group_experts[task_type])
                 {
