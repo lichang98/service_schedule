@@ -60,6 +60,26 @@ namespace utils
             }
         }
 
+        Task &operator=(const Task &tsk)
+        {
+            this->task_id = tsk.task_id;
+            this->tm_stamp = tsk.tm_stamp;
+            this->type = tsk.type;
+            this->max_resp_tm = tsk.max_resp_tm;
+            this->start_process_tmpt = tsk.start_process_tmpt;
+            this->each_stay_dura.clear();
+            for (int val : tsk.each_stay_dura)
+                this->each_stay_dura.push_back(val);
+            this->finish_tmpt = tsk.finish_tmpt;
+            for (int i = 0; i < TASK_MAX_MIGRATION; ++i)
+            {
+                this->task_via_expert_idxs[i] = tsk.task_via_expert_idxs[i];
+                this->task_assign_expert_tm[i] = tsk.task_assign_expert_tm[i];
+                this->task_stay_due_tm[i] = tsk.task_stay_due_tm[i];
+            }
+            this->task_curr_via_count = tsk.task_curr_via_count;
+        }
+
         friend std::ostream &operator<<(std::ostream &out, const Task &task)
         {
             out << "Task: ["
@@ -90,6 +110,22 @@ namespace utils
             num_avail = EXPERT_MAX_PARALLEL;
             id = 0;
             busy_total_time = 0;
+        }
+
+        Expert &operator=(const Expert &expt)
+        {
+            this->id = expt.id;
+            this->process_dura.clear();
+            for (int val : expt.process_dura)
+                this->process_dura.push_back(val);
+            for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
+            {
+                this->process_tasks[i] = expt.process_tasks[i];
+                this->process_tasks_idxs[i] = expt.process_tasks_idxs[i];
+                this->process_remains[i] = expt.process_remains[i];
+            }
+            this->num_avail = expt.num_avail;
+            this->busy_total_time = expt.busy_total_time;
         }
 
         friend std::ostream &operator<<(std::ostream &out, const Expert &e)

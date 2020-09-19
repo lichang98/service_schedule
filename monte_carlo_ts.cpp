@@ -13,28 +13,32 @@ static double best_score = 0;
 struct MCTreeNode
 {
     int env_tm;
-    bool is_leaf;
-    bool is_terminate_stat;
     int num_sim;
-    double sum_reward;
+    double reward_sum;
     MCTreeNode *parent;
     int num_finish_tasks;
     std::vector<utils::Task> task_status;
     std::vector<utils::Expert> expert_status;
     std::vector<MCTreeNode *> children_nodes;
 
-    MCTreeNode() : env_tm(0), is_leaf(true), is_terminate_stat(false), num_sim(0),
-                   sum_reward(0), num_finish_tasks(0), parent(nullptr) {}
+    MCTreeNode() : env_tm(0), num_sim(0), reward_sum(0), num_finish_tasks(0), parent(nullptr) {}
 
     MCTreeNode &operator=(const MCTreeNode &node)
     {
         this->env_tm = node.env_tm;
-        this->is_leaf = node.is_leaf;
-        this->is_terminate_stat = node.is_terminate_stat;
         this->num_sim = 0;
-        this->sum_reward = 0;
+        this->reward_sum = 0;
         this->parent = nullptr;
         this->num_finish_tasks = node.num_finish_tasks;
+        this->task_status.resize(node.task_status.size());
+        for (int i = 0; i < task_status.size(); ++i)
+            this->task_status[i] = node.task_status[i];
+        this->expert_status.resize(node.expert_status.size());
+        for (int i = 0; i < expert_status.size(); ++i)
+            this->expert_status[i] = node.expert_status[i];
+        this->children_nodes.resize(node.children_nodes.size());
+        for (int i = 0; i < children_nodes.size(); ++i)
+            this->children_nodes[i] = node.children_nodes[i];
         return *this;
     }
 };
@@ -214,7 +218,7 @@ void simulate(MCTreeNode *root)
         curr_node = curr_node->parent;
     }
     curr_node->num_sim++;
-    curr_node->sum_reward += score;
+    curr_node->reward_sum += score;
     curr_node->children_nodes.clear();
 }
 
@@ -229,25 +233,52 @@ void simulate(MCTreeNode *root)
  *  4. Selection, at the very initial state, the only choice is the root node, and after the above procedures, the best leaf node will be
  *              selected for next iteration
  */
-void run_alg(MCTreeNode *root, int max_iter = 1000, int num_simulate_each = 100)
+void run_alg(MCTreeNode *root, int max_iter = 1000, int min_num_expand_child = 10, int num_simulate_each = 100)
 {
     std::vector<MCTreeNode *> leaf_nodes;
+    std::default_random_engine random_gen;
     leaf_nodes.push_back(root);
-    while(max_iter-- > 0)
+    while (max_iter-- > 0)
     {
         MCTreeNode *best_leaf_node = leaf_nodes[0];
-        for (int i = 1; i < leaf_nodes.size(); ++i)
+        for (MCTreeNode *node : leaf_nodes)
         {
-            if ((leaf_nodes[i]->sum_reward / (leaf_nodes[i]->num_sim + __DBL_EPSILON__)) <
-                (best_leaf_node->sum_reward / best_leaf_node->num_sim + __DBL_EPSILON__))
+            if ((node->reward_sum / (node->num_sim + __DBL_EPSILON__)) <
+                (best_leaf_node->reward_sum / best_leaf_node->num_sim + __DBL_EPSILON__))
             {
-                best_leaf_node = leaf_nodes[i];
+                best_leaf_node = node;
             }
         }
         // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
-        // TODO
-    }
+        int num_child_expand = 0, max_retry = 10;
+        while (max_retry-- > 0 && num_child_expand < min_num_expand_child)
+        {
+            expand(best_leaf_node);
+            num_child_expand = best_leaf_node->children_nodes.size();
+        }
+        // remove from leaf_nodes record, and add new leaf nodes
+        for (int i = 0; i < leaf_nodes.size(); ++i)
+        {
+            if (leaf_nodes[i] == best_leaf_node)
+            {
+                leaf_nodes.erase(leaf_nodes.begin() + i);
+                break;
+            }
+        }
+        for (MCTreeNode *child_node : best_leaf_node->children_nodes)
+            leaf_nodes.push_back(child_node);
 
+        if (!best_leaf_node->children_nodes.empty())
+        {
+            // simulate from the child nodes till terminate state, calc score and backpropagate
+            std::uniform_int_distribution<int> rand_dist(0, best_leaf_node->children_nodes.size() - 1);
+            for (int i = 0; i < num_simulate_each; ++i)
+            {
+                int rand_select_node_idx = rand_dist(random_gen);
+                simulate(best_leaf_node->children_nodes[rand_select_node_idx]);
+            }
+        }
+    }
 }
 
 int main(int argc, char const *argv[])
