@@ -17,6 +17,7 @@ namespace utils
     size_t PROCESS_TM_FILE_LINE_MAXLEN = 1000;
     const static int EXPERT_MAX_PARALLEL = 3;
     const static int EXPERT_NOT_GOOD_TIME = 999999; // If expert not good at some type tasks, the processing time will be 999999
+    const static int TASK_MAX_MIGRATION = 5;
 
     struct Expert;
 
@@ -31,12 +32,30 @@ namespace utils
         int start_process_tmpt;
         std::vector<int> each_stay_dura; // the stay duration on each via expert
         int finish_tmpt;
+        // for monte carlo tree search
+        int task_via_expert_idxs[TASK_MAX_MIGRATION];
+        int task_stay_due_tm[TASK_MAX_MIGRATION]; // during the migration of tasks, the expected finish time on each expert
+        int task_curr_via_count;
 
-        Task() : task_id(-1), tm_stamp(-1), type(-1), max_resp_tm(-1), start_process_tmpt(-1), finish_tmpt(-1) {}
+        Task() : task_id(-1), tm_stamp(-1), type(-1), max_resp_tm(-1), start_process_tmpt(-1), finish_tmpt(-1), task_curr_via_count(0)
+        {
+            for (int i = 0; i < TASK_MAX_MIGRATION; ++i)
+            {
+                task_via_expert_idxs[i] = -1;
+                task_stay_due_tm[i] = -1;
+            }
+        }
 
         Task(int _task_id, int _tm_stamp, int _type, int _max_resp_tm) : task_id(_task_id), tm_stamp(_tm_stamp),
                                                                          type(_type), max_resp_tm(_max_resp_tm), start_process_tmpt(-1),
-                                                                         finish_tmpt(-1) {}
+                                                                         finish_tmpt(-1), task_curr_via_count(0)
+        {
+            for (int i = 0; i < TASK_MAX_MIGRATION; ++i)
+            {
+                task_via_expert_idxs[i] = -1;
+                task_stay_due_tm[i] = -1;
+            }
+        }
 
         friend std::ostream &operator<<(std::ostream &out, const Task &task)
         {
@@ -54,6 +73,8 @@ namespace utils
         int id;
         std::vector<int> process_dura;
         Task *process_tasks[EXPERT_MAX_PARALLEL];
+        // for monte carlo
+        int process_tasks_idxs[EXPERT_MAX_PARALLEL]; // if no task executed, the value is -1
         int process_remains[EXPERT_MAX_PARALLEL];
         int num_avail;
         // variables for record
@@ -82,6 +103,47 @@ namespace utils
             return process_dura.size();
         }
 
+        // Assign new task to current task
+        bool monte_assign_task(int task_idx)
+        {
+            if (num_avail <= 0)
+                return false;
+            for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
+            {
+                if (process_tasks_idxs[i] == -1)
+                {
+                    process_tasks_idxs[i] = task_idx;
+                    num_avail--;
+                    break;
+                }
+            }
+            return true;
+        }
+
+        // A task leave the expert, it may be due to finishing or migration
+        bool monte_release_task(int task_idx)
+        {
+            bool flag = false;
+            for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
+            {
+                if (process_tasks_idxs[i] == task_idx)
+                {
+                    process_tasks_idxs[i] = -1;
+                    num_avail++;
+                    flag = true;
+                    break;
+                }
+            }
+            return flag;
+        }
+
+        // Env time on slot forward
+        void monte_one_tick()
+        {
+            if (num_avail < EXPERT_MAX_PARALLEL)
+                busy_total_time++;
+        }
+
         // The time elapsed one time slot, the expert process each task one time slot
         // Update the remains time
         std::vector<Task *> update(int tmpt)
@@ -90,7 +152,6 @@ namespace utils
             bool is_working = false;
             for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
             {
-                // FIXME
                 // The recoding of last expert_dura and finish_tmpt may be different if using other strategy
                 if (process_tasks[i])
                 {

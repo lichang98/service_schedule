@@ -1,2 +1,2 @@
-a.out: spt_benchmark.cpp
-	g++ spt_benchmark.cpp -o a.out
+a.out: monte_carlo_ts.cpp
+	g++ monte_carlo_ts.cpp -o a.out
