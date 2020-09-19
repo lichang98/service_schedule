@@ -5,6 +5,9 @@
 #include "metrics.hpp"
 #include <random>
 
+static std::vector<std::vector<int>> best_result; // each line contains three value: task id, expert id, start time
+static double best_score = 0;
+
 // Monte Carlo Tree Node Structure
 // The Node records the state of tasks and experts at certain time stamp
 struct MCTreeNode
@@ -51,7 +54,7 @@ MCTreeNode *init_root(std::vector<utils::Task> &tasks, std::vector<utils::Expert
 /**
  * Exploit from current monte carlo tree node, add child nodes
  */
-void expand(MCTreeNode *root, int num_sim = 10)
+void expand(MCTreeNode *root, int num_expand = 10)
 {
     // randomly select valid action to expand new nodes, simulated to terminal state
     // and backpropgate the rewards
@@ -61,7 +64,7 @@ void expand(MCTreeNode *root, int num_sim = 10)
     std::uniform_int_distribution<int> dist_action_with_wait(0, root->expert_status.size());
     std::uniform_int_distribution<int> dist_action_no_wait(0, root->expert_status.size() - 1);
 
-    while (num_sim-- > 0)
+    while (num_expand-- > 0)
     {
         int selected_task_idx = dist(random_gen);
         // After randomly select a task, firstly, the time should be checked
@@ -149,6 +152,102 @@ void expand(MCTreeNode *root, int num_sim = 10)
             child->children_nodes.clear();
         }
     }
+}
+
+/**
+ * Simulate from current state until the terminal state
+ * While reaching the terminal state, the reward will be calculated and backpropagate upward
+ * This function do simulation once, the child nodes created during simulation will be released
+ */
+void simulate(MCTreeNode *root)
+{
+    MCTreeNode *curr_node = root;
+    bool reach_end = false;
+    while (!reach_end)
+    {
+        // Use Expand operation, only one child node will be expanded
+        expand(curr_node, 1);
+        curr_node = curr_node->children_nodes[0];
+        if (curr_node->num_finish_tasks == curr_node->task_status.size())
+        {
+            reach_end = true;
+        }
+    }
+    // Calculating score and backpropagate
+    std::vector<double> expt_workloads(curr_node->expert_status.size(), 0),
+        task_resp_tmout(curr_node->task_status.size(), 0), exec_eff(curr_node->task_status.size(), 0);
+    for (int i = 0; i < curr_node->task_status.size(); ++i)
+    {
+        task_resp_tmout[i] = metrics::task_response_timeout(curr_node->task_status[i]);
+        exec_eff[i] = metrics::task_exec_efficiency(curr_node->task_status[i]);
+    }
+    for (int i = 0; i < curr_node->expert_status.size(); ++i)
+        expt_workloads[i] = metrics::expert_workload(curr_node->expert_status[i]);
+    double score = metrics::score(expt_workloads, task_resp_tmout, exec_eff);
+    if (score > best_score)
+    {
+        // The result is better than current found best score, record it
+        best_score = score;
+        best_result.clear();
+        for (utils::Task &tsk : curr_node->task_status)
+        {
+            for (int i = 0; i < utils::EXPERT_MAX_PARALLEL; ++i)
+            {
+                if (tsk.task_assign_expert_tm[i] != -1)
+                    best_result.emplace_back(std::vector<int>({tsk.task_id, tsk.task_via_expert_idxs[i], tsk.task_assign_expert_tm[i]}));
+            }
+        }
+        std::sort(best_result.begin(), best_result.end(), [](std::vector<int> &a, std::vector<int> &b) -> bool {
+            if (a[2] != b[2])
+                return a[2] < b[2];
+            else
+                return a[0] < b[0];
+        });
+    }
+    // Backpropagate
+    MCTreeNode *child = curr_node;
+    curr_node = curr_node->parent;
+    while (curr_node != root)
+    {
+        delete child;
+        child = curr_node;
+        curr_node = curr_node->parent;
+    }
+    curr_node->num_sim++;
+    curr_node->sum_reward += score;
+    curr_node->children_nodes.clear();
+}
+
+/**
+ * Monte Carlo Tree Search algorithm method
+ * The algorithm contains four basic operations:
+ *  1. Expansion, at the beginning of each iteration, the algorithm need to select the best leaf node so far to expand new child nodes
+ *              At the initial state only root state, the expand operations is executed on root node
+ *  2. Simulation, after expand some child nodes, the algorithm will simulate many times from the child node till the terminal state
+ *  3. Backpropagate, when a simulation process reached the terminal state, the score will be calculated, if score is better than
+ *              the best score so far, the score and the whole transition will be recorded.
+ *  4. Selection, at the very initial state, the only choice is the root node, and after the above procedures, the best leaf node will be
+ *              selected for next iteration
+ */
+void run_alg(MCTreeNode *root, int max_iter = 1000, int num_simulate_each = 100)
+{
+    std::vector<MCTreeNode *> leaf_nodes;
+    leaf_nodes.push_back(root);
+    while(max_iter-- > 0)
+    {
+        MCTreeNode *best_leaf_node = leaf_nodes[0];
+        for (int i = 1; i < leaf_nodes.size(); ++i)
+        {
+            if ((leaf_nodes[i]->sum_reward / (leaf_nodes[i]->num_sim + __DBL_EPSILON__)) <
+                (best_leaf_node->sum_reward / best_leaf_node->num_sim + __DBL_EPSILON__))
+            {
+                best_leaf_node = leaf_nodes[i];
+            }
+        }
+        // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
+        // TODO
+    }
+
 }
 
 int main(int argc, char const *argv[])

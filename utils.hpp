@@ -34,7 +34,8 @@ namespace utils
         int finish_tmpt;
         // for monte carlo tree search
         int task_via_expert_idxs[TASK_MAX_MIGRATION];
-        int task_stay_due_tm[TASK_MAX_MIGRATION]; // during the migration of tasks, the expected finish time on each expert
+        int task_assign_expert_tm[TASK_MAX_MIGRATION]; // The time when the task assigned to experts
+        int task_stay_due_tm[TASK_MAX_MIGRATION];      // during the migration of tasks, the expected finish time on each expert
         int task_curr_via_count;
 
         Task() : task_id(-1), tm_stamp(-1), type(-1), max_resp_tm(-1), start_process_tmpt(-1), finish_tmpt(-1), task_curr_via_count(0)
@@ -43,6 +44,7 @@ namespace utils
             {
                 task_via_expert_idxs[i] = -1;
                 task_stay_due_tm[i] = -1;
+                task_assign_expert_tm[i] = -1;
             }
         }
 
@@ -54,6 +56,7 @@ namespace utils
             {
                 task_via_expert_idxs[i] = -1;
                 task_stay_due_tm[i] = -1;
+                task_assign_expert_tm[i] = -1;
             }
         }
 
