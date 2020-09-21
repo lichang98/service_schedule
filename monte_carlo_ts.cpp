@@ -59,15 +59,18 @@ MCTreeNode *init_root(std::vector<utils::Task> &tasks, std::vector<utils::Expert
 
 /**
  * Exploit from current monte carlo tree node, add child nodes
+ * @param num_expand: the max expand child node count
+ * @param possible_beg_not_wait: when reaching the generating time of a task, the possibility range of not waitting
+ * @param possible_percent_stick_curr: the possibility for choosing stick to current expert, continuing executing
  */
-void expand(MCTreeNode *root, int num_expand = 10)
+void expand(MCTreeNode *root, int num_expand = 10, int possible_beg_not_wait = 90, int possible_percent_stick_curr = 95)
 {
     // randomly select valid action to expand new nodes, simulated to terminal state
     // and backpropgate the rewards
     int env_tm = root->env_tm + 1;
     std::default_random_engine random_gen;
+    std::uniform_int_distribution<int> dist_percent(1, 100);
     std::uniform_int_distribution<int> dist(0, root->task_status.size() - 1);
-    std::uniform_int_distribution<int> dist_action_with_wait(0, root->expert_status.size());
     std::uniform_int_distribution<int> dist_action_no_wait(0, root->expert_status.size() - 1);
 
     while (num_expand-- > 0)
@@ -89,10 +92,12 @@ void expand(MCTreeNode *root, int num_expand = 10)
         if (root->task_status[selected_task_idx].task_via_expert_idxs[0] == -1)
         {
             // the task has not been assigned to any expert, can choose to wait
-            int random_action = dist_action_with_wait(random_gen);
-            child->env_tm = env_tm;
-            if (random_action < child->expert_status.size())
+            int possible_assign_wait = dist_percent(random_gen);
+            // choosing assigning to experts
+            if (possible_assign_wait <= possible_beg_not_wait)
             {
+                int random_action = dist_action_no_wait(random_gen);
+                child->env_tm = env_tm;
                 // assign to expert to execute
                 child->expert_status[random_action].monte_assign_task(selected_task_idx);
                 child->task_status[selected_task_idx].start_process_tmpt = env_tm;
@@ -106,37 +111,42 @@ void expand(MCTreeNode *root, int num_expand = 10)
         else
         {
             // The task has been assigned to at least one expert, so, the possible actions are continuing executing and migration
-            int random_action = dist_action_no_wait(random_gen);
+            // The possibility should favor current assigned expert
+            // At here 95% for current expert and 5% for migrating to other expert, if the task has reached the max migration restricted
+            // then the task can only choose continuing executing on current expert
+            int rand_curr_migrate = dist_percent(random_gen);
             utils::Task *selected_task = &child->task_status[selected_task_idx];
-            if (random_action == selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1])
+            int current_assigned_expt_idx = selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1];
+            if (rand_curr_migrate <= possible_percent_stick_curr || selected_task->task_curr_via_count == utils::TASK_MAX_MIGRATION)
             {
-                // Continuing executing on this expert, check if the task finish
+                // choose to continue executing on current expert
+                // check if the tasks finished at current time slot
                 if (env_tm == selected_task->task_stay_due_tm[selected_task->task_curr_via_count - 1])
                 {
                     // Task finished on the expert
                     selected_task->finish_tmpt = env_tm;
-                    child->expert_status[random_action].monte_release_task(selected_task_idx);
+                    child->expert_status[current_assigned_expt_idx].monte_release_task(selected_task_idx);
                     selected_task->each_stay_dura.push_back(env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1]);
                 }
             }
             else
             {
-                // Migrate to new expert
-                if (selected_task->task_curr_via_count < utils::TASK_MAX_MIGRATION &&
-                    child->expert_status[random_action].monte_assign_task(selected_task_idx))
-                {
-                    // Must check the action is valid, the next expert to migrate may not have space
-                    int prev_expert_idx = selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1];
-                    // record the duration of staying in previous expert
-                    selected_task->each_stay_dura.push_back(env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1]);
-                    // record new information of new migrated expert
-                    selected_task->task_via_expert_idxs[selected_task->task_curr_via_count] = random_action;
-                    int task_type = child->task_status[selected_task_idx].type;
-                    selected_task->task_stay_due_tm[selected_task->task_curr_via_count] = env_tm + child->expert_status[random_action].process_dura[task_type] - 1;
-                    selected_task->task_assign_expert_tm[selected_task->task_curr_via_count] = env_tm;
-                    selected_task->task_curr_via_count++;
-                    child->expert_status[prev_expert_idx].monte_release_task(selected_task_idx);
-                }
+                // choose other experts to migrate
+                int random_action = dist_action_no_wait(random_gen);
+                // check if the expert is available, if not, random choosing another
+                while (random_action == current_assigned_expt_idx || !child->expert_status[random_action].monte_assign_task(selected_task_idx))
+                    random_action = dist_action_no_wait(random_gen);
+                // Must check the action is valid, the next expert to migrate may not have space
+                int prev_expert_idx = selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1];
+                // record the duration of staying in previous expert
+                selected_task->each_stay_dura.push_back(env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1]);
+                // record new information of new migrated expert
+                selected_task->task_via_expert_idxs[selected_task->task_curr_via_count] = random_action;
+                int task_type = child->task_status[selected_task_idx].type;
+                selected_task->task_stay_due_tm[selected_task->task_curr_via_count] = env_tm + child->expert_status[random_action].process_dura[task_type] - 1;
+                selected_task->task_assign_expert_tm[selected_task->task_curr_via_count] = env_tm;
+                selected_task->task_curr_via_count++;
+                child->expert_status[prev_expert_idx].monte_release_task(selected_task_idx);
             }
         }
     }
@@ -154,34 +164,20 @@ void expand(MCTreeNode *root, int num_expand = 10)
  * While reaching the terminal state, the reward will be calculated and backpropagate upward
  * This function do simulation once, the child nodes created during simulation will be released
  */
-void simulate(MCTreeNode *root, int expand_retry = 10)
+void simulate(MCTreeNode *root)
 {
     MCTreeNode *curr_node = root;
     bool reach_end = false;
     std::cout << "Start simulation..." << std::endl;
-    int simulate_num_epoch = 1;
     while (!reach_end)
     {
-        // Use Expand operation, only one child node will be expanded
-        for (int i = 0; i < expand_retry; ++i)
-        {
-            expand(curr_node, 1);
-            if (curr_node->children_nodes.size() == 1)
-                break;
-        }
-        if (curr_node->children_nodes.empty())
-            break;
+        expand(curr_node, 1);
         MCTreeNode *tmp = curr_node;
         curr_node = curr_node->children_nodes[0];
         if (tmp != root)
             delete tmp;
         if (curr_node->num_finish_tasks == curr_node->task_status.size())
             reach_end = true;
-    }
-    if (!reach_end)
-    {
-        std::cout << "Monte Carlo simulation terminated at non finish state" << std::endl;
-        return;
     }
     std::cout << "Monte Carlo simulation reach end" << std::endl;
     // Calculating score and backpropagate
@@ -207,6 +203,8 @@ void simulate(MCTreeNode *root, int expand_retry = 10)
             {
                 if (tsk.task_assign_expert_tm[i] != -1)
                     best_result.emplace_back(std::vector<int>({tsk.task_id, tsk.task_via_expert_idxs[i], tsk.task_assign_expert_tm[i]}));
+                else
+                    break;
             }
         }
         std::sort(best_result.begin(), best_result.end(), [](std::vector<int> &a, std::vector<int> &b) -> bool {
@@ -235,7 +233,7 @@ void simulate(MCTreeNode *root, int expand_retry = 10)
  *  4. Selection, at the very initial state, the only choice is the root node, and after the above procedures, the best leaf node will be
  *              selected for next iteration
  */
-void run_alg(MCTreeNode *root, int max_iter = 1000, int num_retry = 10, int min_num_expand_child = 10, int num_simulate_each = 100)
+void run_alg(MCTreeNode *root, int max_iter = 1000, int min_num_expand_child = 100, int num_simulate_each = 100)
 {
     std::vector<MCTreeNode *> leaf_nodes;
     std::default_random_engine random_gen;
@@ -256,13 +254,8 @@ void run_alg(MCTreeNode *root, int max_iter = 1000, int num_retry = 10, int min_
             }
         }
         // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
-        int num_child_expand = 0;
-        for (int i = 0; i < num_retry && num_child_expand < min_num_expand_child; ++i)
-        {
+        for (int i = 0; i < min_num_expand_child; ++i)
             expand(best_leaf_node);
-            num_child_expand = best_leaf_node->children_nodes.size();
-        }
-        std::cout << "\t current node expand " << num_child_expand << " child nodes" << std::endl;
         sleep(1);
         // remove from leaf_nodes record, and add new leaf nodes
         for (int i = 0; i < leaf_nodes.size(); ++i)
