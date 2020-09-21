@@ -111,6 +111,11 @@ namespace utils
             id = 0;
             busy_total_time = 0;
         }
+        ~Expert()
+        {
+            for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
+                delete process_tasks[i];
+        }
 
         Expert &operator=(const Expert &expt)
         {

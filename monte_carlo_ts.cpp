@@ -3,7 +3,9 @@
  * 
  */
 #include "metrics.hpp"
+#include <unistd.h>
 #include <random>
+#include <omp.h>
 
 static std::vector<std::vector<int>> best_result; // each line contains three value: task id, expert id, start time
 static double best_score = 0;
@@ -88,19 +90,16 @@ void expand(MCTreeNode *root, int num_expand = 10)
         {
             // the task has not been assigned to any expert, can choose to wait
             int random_action = dist_action_with_wait(random_gen);
-            if (random_action == root->expert_status.size())
-            {
-                // wait
-                child->env_tm = env_tm;
-            }
-            else
+            child->env_tm = env_tm;
+            if (random_action < child->expert_status.size())
             {
                 // assign to expert to execute
                 child->expert_status[random_action].monte_assign_task(selected_task_idx);
                 child->task_status[selected_task_idx].start_process_tmpt = env_tm;
                 int task_type = child->task_status[selected_task_idx].type;
-                child->task_status[selected_task_idx].task_stay_due_tm[0] = env_tm + child->expert_status[random_action].process_dura[task_type];
+                child->task_status[selected_task_idx].task_stay_due_tm[0] = env_tm + child->expert_status[random_action].process_dura[task_type] - 1;
                 child->task_status[selected_task_idx].task_via_expert_idxs[0] = random_action;
+                child->task_status[selected_task_idx].task_assign_expert_tm[0] = env_tm;
                 child->task_status[selected_task_idx].task_curr_via_count++;
             }
         }
@@ -117,15 +116,25 @@ void expand(MCTreeNode *root, int num_expand = 10)
                     // Task finished on the expert
                     selected_task->finish_tmpt = env_tm;
                     child->expert_status[random_action].monte_release_task(selected_task_idx);
+                    selected_task->each_stay_dura.push_back(env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1]);
                 }
             }
             else
             {
                 // Migrate to new expert
-                if (child->expert_status[random_action].monte_assign_task(selected_task_idx))
+                if (selected_task->task_curr_via_count < utils::TASK_MAX_MIGRATION &&
+                    child->expert_status[random_action].monte_assign_task(selected_task_idx))
                 {
                     // Must check the action is valid, the next expert to migrate may not have space
                     int prev_expert_idx = selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1];
+                    // record the duration of staying in previous expert
+                    selected_task->each_stay_dura.push_back(env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1]);
+                    // record new information of new migrated expert
+                    selected_task->task_via_expert_idxs[selected_task->task_curr_via_count] = random_action;
+                    int task_type = child->task_status[selected_task_idx].type;
+                    selected_task->task_stay_due_tm[selected_task->task_curr_via_count] = env_tm + child->expert_status[random_action].process_dura[task_type] - 1;
+                    selected_task->task_assign_expert_tm[selected_task->task_curr_via_count] = env_tm;
+                    selected_task->task_curr_via_count++;
                     child->expert_status[prev_expert_idx].monte_release_task(selected_task_idx);
                 }
             }
@@ -138,24 +147,6 @@ void expand(MCTreeNode *root, int num_expand = 10)
         for (int i = 0; i < child->expert_status.size(); ++i)
             child->expert_status[i].monte_one_tick();
     }
-    if (root->children_nodes.empty())
-    {
-        // If may occures at the beginning when no task reach the generating time or when all tasks finish
-        if (root->num_finish_tasks == root->task_status.size())
-        {
-            // all tasks finish
-        }
-        else
-        {
-            // no task reach generating time
-            MCTreeNode *child = new MCTreeNode();
-            *child = *root;
-            child->env_tm++;
-            root->children_nodes.push_back(child);
-            child->parent = root;
-            child->children_nodes.clear();
-        }
-    }
 }
 
 /**
@@ -163,20 +154,36 @@ void expand(MCTreeNode *root, int num_expand = 10)
  * While reaching the terminal state, the reward will be calculated and backpropagate upward
  * This function do simulation once, the child nodes created during simulation will be released
  */
-void simulate(MCTreeNode *root)
+void simulate(MCTreeNode *root, int expand_retry = 10)
 {
     MCTreeNode *curr_node = root;
     bool reach_end = false;
+    std::cout << "Start simulation..." << std::endl;
+    int simulate_num_epoch = 1;
     while (!reach_end)
     {
         // Use Expand operation, only one child node will be expanded
-        expand(curr_node, 1);
-        curr_node = curr_node->children_nodes[0];
-        if (curr_node->num_finish_tasks == curr_node->task_status.size())
+        for (int i = 0; i < expand_retry; ++i)
         {
-            reach_end = true;
+            expand(curr_node, 1);
+            if (curr_node->children_nodes.size() == 1)
+                break;
         }
+        if (curr_node->children_nodes.empty())
+            break;
+        MCTreeNode *tmp = curr_node;
+        curr_node = curr_node->children_nodes[0];
+        if (tmp != root)
+            delete tmp;
+        if (curr_node->num_finish_tasks == curr_node->task_status.size())
+            reach_end = true;
     }
+    if (!reach_end)
+    {
+        std::cout << "Monte Carlo simulation terminated at non finish state" << std::endl;
+        return;
+    }
+    std::cout << "Monte Carlo simulation reach end" << std::endl;
     // Calculating score and backpropagate
     std::vector<double> expt_workloads(curr_node->expert_status.size(), 0),
         task_resp_tmout(curr_node->task_status.size(), 0), exec_eff(curr_node->task_status.size(), 0);
@@ -191,6 +198,7 @@ void simulate(MCTreeNode *root)
     if (score > best_score)
     {
         // The result is better than current found best score, record it
+        std::cout << "Monte Carlo simulation, found better solution, score=" << score << std::endl;
         best_score = score;
         best_result.clear();
         for (utils::Task &tsk : curr_node->task_status)
@@ -209,17 +217,11 @@ void simulate(MCTreeNode *root)
         });
     }
     // Backpropagate
-    MCTreeNode *child = curr_node;
-    curr_node = curr_node->parent;
-    while (curr_node != root)
-    {
-        delete child;
-        child = curr_node;
-        curr_node = curr_node->parent;
-    }
-    curr_node->num_sim++;
-    curr_node->reward_sum += score;
-    curr_node->children_nodes.clear();
+    if (curr_node != root)
+        delete curr_node;
+    root->num_sim++;
+    root->reward_sum += score;
+    root->children_nodes.clear();
 }
 
 /**
@@ -233,29 +235,35 @@ void simulate(MCTreeNode *root)
  *  4. Selection, at the very initial state, the only choice is the root node, and after the above procedures, the best leaf node will be
  *              selected for next iteration
  */
-void run_alg(MCTreeNode *root, int max_iter = 1000, int min_num_expand_child = 10, int num_simulate_each = 100)
+void run_alg(MCTreeNode *root, int max_iter = 1000, int num_retry = 10, int min_num_expand_child = 10, int num_simulate_each = 100)
 {
     std::vector<MCTreeNode *> leaf_nodes;
     std::default_random_engine random_gen;
     leaf_nodes.push_back(root);
+    std::cout << "Monte Carlo alg started...." << std::endl;
+    int num_epoch = 1;
     while (max_iter-- > 0)
     {
+        sleep(1);
+        std::cout << "Iteration " << num_epoch++ << ", leaf node count= " << leaf_nodes.size() << std::endl;
         MCTreeNode *best_leaf_node = leaf_nodes[0];
         for (MCTreeNode *node : leaf_nodes)
         {
-            if ((node->reward_sum / (node->num_sim + __DBL_EPSILON__)) <
+            if ((node->reward_sum / (node->num_sim + __DBL_EPSILON__)) >
                 (best_leaf_node->reward_sum / best_leaf_node->num_sim + __DBL_EPSILON__))
             {
                 best_leaf_node = node;
             }
         }
         // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
-        int num_child_expand = 0, max_retry = 10;
-        while (max_retry-- > 0 && num_child_expand < min_num_expand_child)
+        int num_child_expand = 0;
+        for (int i = 0; i < num_retry && num_child_expand < min_num_expand_child; ++i)
         {
             expand(best_leaf_node);
             num_child_expand = best_leaf_node->children_nodes.size();
         }
+        std::cout << "\t current node expand " << num_child_expand << " child nodes" << std::endl;
+        sleep(1);
         // remove from leaf_nodes record, and add new leaf nodes
         for (int i = 0; i < leaf_nodes.size(); ++i)
         {
@@ -271,11 +279,16 @@ void run_alg(MCTreeNode *root, int max_iter = 1000, int min_num_expand_child = 1
         if (!best_leaf_node->children_nodes.empty())
         {
             // simulate from the child nodes till terminate state, calc score and backpropagate
+            std::cout << "\t start simulations from child nodes...." << std::endl;
+            sleep(1);
             std::uniform_int_distribution<int> rand_dist(0, best_leaf_node->children_nodes.size() - 1);
             for (int i = 0; i < num_simulate_each; ++i)
             {
-                int rand_select_node_idx = rand_dist(random_gen);
-                simulate(best_leaf_node->children_nodes[rand_select_node_idx]);
+#pragma omp parallel for
+                for (int j = 0; j < best_leaf_node->children_nodes.size(); ++j)
+                {
+                    simulate(best_leaf_node->children_nodes[j]);
+                }
             }
         }
     }
@@ -286,6 +299,7 @@ int main(int argc, char const *argv[])
     std::vector<utils::Task> tasks = utils::load_work_order();
     std::vector<utils::Expert> experts = utils::load_expert_process_duras();
     int num_types = experts[0].num_types();
-
+    MCTreeNode *root = init_root(tasks, experts);
+    run_alg(root);
     return 0;
 }
