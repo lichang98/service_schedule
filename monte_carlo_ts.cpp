@@ -80,14 +80,13 @@ bool assign_to_expert(MCTreeNode *node, int selected_task_idx, int env_tm, int s
 {
     utils::Task *tsk = &node->task_status[selected_task_idx];
     if (tsk->task_curr_via_count == 0)
-    {
         tsk->start_process_tmpt = env_tm;
-    }
     int type = tsk->type;
     tsk->task_stay_due_tm[tsk->task_curr_via_count] = env_tm + node->expert_status[selected_expert_idx].process_dura[type] - 1;
     tsk->task_via_expert_idxs[tsk->task_curr_via_count] = selected_expert_idx;
     tsk->task_assign_expert_tm[tsk->task_curr_via_count] = env_tm;
     tsk->task_curr_via_count++;
+    node->expert_status[selected_expert_idx].monte_assign_task(selected_task_idx);
     return true;
 }
 
@@ -117,18 +116,21 @@ bool assign_suit_expert(MCTreeNode *node, int selected_task_idx, int env_tm,
                         std::vector<std::vector<int>> &expt_group, int max_num_assign_retry = 100)
 {
     // Choose from the suitable expert group
+    node->env_tm = env_tm;
     utils::Task *selected_tsk = &node->task_status[selected_task_idx];
     int task_type = selected_tsk->type;
     std::uniform_int_distribution<int> dist_suit_group(0, expt_group[task_type].size() - 1);
     int random_choose_expt = expt_group[task_type][dist_suit_group(random_gen)];
     int num_retry = 0;
     bool is_found_suit_expt = true;
-    while (num_retry++ < max_num_assign_retry && !node->expert_status[random_choose_expt].monte_assign_task(selected_task_idx))
-        random_choose_expt = expt_group[task_type][dist_suit_group(random_gen)];
-    if (num_retry == max_num_assign_retry)
+    // while (num_retry++ < max_num_assign_retry && !node->expert_status[random_choose_expt].monte_assign_task(selected_task_idx))
+    //     random_choose_expt = expt_group[task_type][dist_suit_group(random_gen)];
+    while (num_retry < max_num_assign_retry)
     {
-        // not found suit expert after max retry, random choose from all expert
-        is_found_suit_expt = false;
+        is_found_suit_expt = node->expert_status[random_choose_expt].monte_assign_task(selected_task_idx);
+        if (is_found_suit_expt)
+            break;
+        num_retry++;
     }
     if (is_found_suit_expt)
     {
@@ -153,9 +155,8 @@ bool assign_suit_expert(MCTreeNode *node, int selected_task_idx, int env_tm,
  * @param possible_percent_stick_curr: the possibility for choosing stick to current expert, continuing executing
  * @param possible_favor_suit_expert: the possibility of assigning current task to suitable expert to process
  */
-bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num_expand = 10,
-            int max_num_assign_retry = 100, int possible_beg_not_wait = 90,
-            int possible_percent_stick_curr = 100, int possible_favor_suit_expert = 95)
+bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num_max_retry = 10, int num_expand = 10,
+            int possible_beg_not_wait = 95, int possible_percent_stick_curr = 98, int possible_favor_suit_expert = 98)
 {
     // randomly select valid action to expand new nodes, simulated to terminal state
     // and backpropgate the rewards
@@ -195,7 +196,6 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
             {
                 // The possibility of choosing expert to executing should favor the suitable expert
                 int rand_choose_suit_expt = dist_percent(random_gen);
-                bool is_found_suit_expt = true;
                 if (rand_choose_suit_expt <= possible_favor_suit_expert)
                 {
                     // Choose from the suitable expert group
@@ -206,49 +206,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                         if (!assign_rand_expert(child, selected_task_idx, env_tm, dist_action_no_wait))
                             return false;
                     }
-                    // utils::Task *selected_tsk = &child->task_status[selected_task_idx];
-                    // int task_type = selected_tsk->type;
-                    // std::uniform_int_distribution<int> dist_suit_group(0, expt_group[task_type].size() - 1);
-                    // int random_choose_expt = expt_group[task_type][dist_suit_group(random_gen)];
-                    // int num_retry = 0;
-                    // while (num_retry++ < max_num_assign_retry && !child->expert_status[random_choose_expt].monte_assign_task(selected_task_idx))
-                    //     random_choose_expt = expt_group[task_type][dist_suit_group(random_gen)];
-                    // if (num_retry == max_num_assign_retry)
-                    // {
-                    //     // not found suit expert after max retry, random choose from all expert
-                    //     is_found_suit_expt = false;
-                    // }
-                    // if (is_found_suit_expt)
-                    // {
-                    //     std::cout << "Task " << selected_task_idx << " choose suit expert " << random_choose_expt << std::endl;
-                    //     // assign the task to the expert
-                    //     selected_tsk->start_process_tmpt = env_tm;
-                    //     selected_tsk->task_stay_due_tm[0] = env_tm + child->expert_status[random_choose_expt].process_dura[task_type] - 1;
-                    //     selected_tsk->task_via_expert_idxs[0] = random_choose_expt;
-                    //     selected_tsk->task_assign_expert_tm[0] = env_tm;
-                    //     selected_tsk->task_curr_via_count++;
-                    // }
                 }
-                // if the above process not found suit expert or the random action is choos other experts that not be
-                // suitable for processing current task
-                // if (!is_found_suit_expt || rand_choose_suit_expt > possible_favor_suit_expert)
-                // {
-                //     int random_action = dist_action_no_wait(random_gen);
-                //     std::cout << "Task " << selected_task_idx << " first time assigned to expert is " << random_action << " need check...." << std::endl;
-                //     child->env_tm = env_tm;
-                //     // assign to expert to execute
-                //     while (max_num_assign_retry-- > 0 && !child->expert_status[random_action].monte_assign_task(selected_task_idx))
-                //         random_action = dist_action_no_wait(random_gen);
-                //     if (max_num_assign_retry == 0)
-                //         return false;
-                //     std::cout << "Task " << selected_task_idx << " after check, select expert = " << random_action << std::endl;
-                //     child->task_status[selected_task_idx].start_process_tmpt = env_tm;
-                //     int task_type = child->task_status[selected_task_idx].type;
-                //     child->task_status[selected_task_idx].task_stay_due_tm[0] = env_tm + child->expert_status[random_action].process_dura[task_type] - 1;
-                //     child->task_status[selected_task_idx].task_via_expert_idxs[0] = random_action;
-                //     child->task_status[selected_task_idx].task_assign_expert_tm[0] = env_tm;
-                //     child->task_status[selected_task_idx].task_curr_via_count++;
-                // }
             }
         }
         else if (env_tm -
@@ -275,7 +233,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                         if (child->expert_status[i].num_avail > 0)
                             avail_expert_idx.push_back(i);
                     }
-                    if(!avail_expert_idx.empty())
+                    if (!avail_expert_idx.empty())
                     {
                         std::uniform_int_distribution<int> dist_rand_avail(0, avail_expert_idx.size() - 1);
                         int choice_idx = dist_rand_avail(random_gen);
@@ -314,7 +272,11 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                 // choose to continue executing on current expert
                 // check if the tasks finished at current time slot
                 std::cout << "Task " << selected_task_idx << " continuing executing on expert " << std::endl;
-                if (env_tm == selected_task->task_stay_due_tm[selected_task->task_curr_via_count - 1])
+                if (env_tm - selected_task->task_assign_expert_tm[selected_task->task_curr_via_count - 1] >= force_migrate_max_exec_tm)
+                {
+                    return false;
+                }
+                else if (env_tm == selected_task->task_stay_due_tm[selected_task->task_curr_via_count - 1])
                 {
                     // Task finished on the expert
                     selected_task->finish_tmpt = env_tm;
@@ -329,8 +291,19 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                 int random_action = dist_action_no_wait(random_gen);
                 std::cout << "Task " << selected_task_idx << " migrate" << std::endl;
                 // check if the expert is available, if not, random choosing another
-                while (random_action == current_assigned_expt_idx || !child->expert_status[random_action].monte_assign_task(selected_task_idx))
-                    random_action = dist_action_no_wait(random_gen);
+                int retry_count = 0;
+                bool flag_assign = false;
+                while (retry_count < num_max_retry)
+                {
+                    while (random_action == current_assigned_expt_idx)
+                        random_action = dist_action_no_wait(random_gen);
+                    retry_count++;
+                    flag_assign = child->expert_status[random_action].monte_assign_task(selected_task_idx);
+                    if (flag_assign)
+                        break;
+                }
+                if (!flag_assign)
+                    return false;
                 std::cout << "Task " << selected_task_idx << " migrate to expert " << random_action << std::endl;
                 // Must check the action is valid, the next expert to migrate may not have space
                 int prev_expert_idx = selected_task->task_via_expert_idxs[selected_task->task_curr_via_count - 1];
