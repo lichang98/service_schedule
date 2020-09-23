@@ -11,6 +11,7 @@ static std::vector<std::vector<int>> best_result; // each line contains three va
 static double best_score = 0;
 static std::default_random_engine random_gen;
 static int force_migrate_max_exec_tm = 1000; // if task has executed on a expert for more than the value, the task must be forced to migrate
+static const int MAX_NUM_CHILDREN = 10;
 
 // Monte Carlo Tree Node Structure
 // The Node records the state of tasks and experts at certain time stamp
@@ -23,16 +24,21 @@ struct MCTreeNode
     int num_finish_tasks;
     std::vector<utils::Task> task_status;
     std::vector<utils::Expert> expert_status;
-    std::vector<MCTreeNode *> children_nodes;
+    MCTreeNode *children_node[MAX_NUM_CHILDREN];
+    int child_node_count;
 
-    MCTreeNode() : env_tm(0), num_sim(0), reward_sum(0), num_finish_tasks(0), parent(nullptr) {}
+    MCTreeNode() : env_tm(0), num_sim(0), reward_sum(0), num_finish_tasks(0), parent(nullptr), child_node_count(0)
+    {
+        std::fill(children_node, children_node + MAX_NUM_CHILDREN, nullptr);
+    }
 
     ~MCTreeNode()
     {
         parent = nullptr;
         task_status.clear();
         expert_status.clear();
-        children_nodes.clear();
+        for (int i = 0; i < child_node_count; ++i)
+            children_node[i] = nullptr;
     }
 
     MCTreeNode &operator=(const MCTreeNode &node)
@@ -52,6 +58,26 @@ struct MCTreeNode
                 this->expert_status[i] = node.expert_status[i];
         }
         return *this;
+    }
+
+    void add_new_child(MCTreeNode *child)
+    {
+        this->children_node[this->child_node_count++] = child;
+    }
+
+    /**
+     * only remove child node from this node's children_node array, not free it
+     */
+    void remove_last_child()
+    {
+        this->children_node[--this->child_node_count] = nullptr;
+    }
+
+    void clear_children_nodes()
+    {
+        for (int i = 0; i < this->child_node_count; ++i)
+            this->children_node[i] = nullptr;
+        this->child_node_count = 0;
     }
 };
 
@@ -196,8 +222,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
         *child = *root;
         child->parent = root;
         child->env_tm = env_tm;
-        child->children_nodes.clear();
-        root->children_nodes.push_back(child);
+        root->add_new_child(child);
         // random generate integer in [0, number experts], where the last number used as wait,
         // the wait action can only be taken when the task has not been assigned to any expert
         if (root->task_status[selected_task_idx].task_via_expert_idxs[0] == -1)
@@ -253,7 +278,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                                 std::cout << __LINE__
                                           << " simulation terminate, reason=task assigned to expert failed at init stage, failed tasks = "
                                           << selected_task_idx << std::endl;
-                                root->children_nodes.pop_back();
+                                root->remove_last_child();
                                 delete child;
                                 child = nullptr;
                                 return false;
@@ -274,7 +299,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
             if (tsk->task_curr_via_count == utils::TASK_MAX_MIGRATION)
             {
                 std::cout << __LINE__ << " simulation terminate, reason=task at a non-suitable expert with max migration" << std::endl;
-                root->children_nodes.pop_back();
+                root->remove_last_child();
                 delete child;
                 child = nullptr;
                 tsk = nullptr;
@@ -307,7 +332,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                     {
                         // no available suit expert
                         std::cout << __LINE__ << " simulation terminate, reason=next stage is max migration restrict, not found suitable one" << std::endl;
-                        root->children_nodes.pop_back();
+                        root->remove_last_child();
                         delete child;
                         child = nullptr;
                         tsk = nullptr;
@@ -326,7 +351,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                             if (!assign_rand_expert(child, selected_task_idx, env_tm, dist_action_no_wait))
                             {
                                 std::cout << __LINE__ << " simulation terminate, reason=task force migrate, not found suitable next expert" << std::endl;
-                                root->children_nodes.pop_back();
+                                root->remove_last_child();
                                 delete child;
                                 child = nullptr;
                                 tsk = nullptr;
@@ -359,7 +384,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                 {
                     std::cout << __LINE__
                               << " simulation terminate, reason=continuing executing on current expert, reach max exec time restrict" << std::endl;
-                    root->children_nodes.pop_back();
+                    root->remove_last_child();
                     delete child;
                     child = nullptr;
                     selected_task = nullptr;
@@ -400,7 +425,7 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                     {
                         std::cout << __LINE__ << " simulation terminate, reason=continuing executing on current expert, reach max exec time restrict"
                                   << std::endl;
-                        root->children_nodes.pop_back();
+                        root->remove_last_child();
                         delete child;
                         child = nullptr;
                         selected_task = nullptr;
@@ -434,23 +459,21 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
         }
         child = nullptr;
     }
-
     // When no random selected tasks is generated at current time, no action
-    if (root->children_nodes.empty())
+    if (root->child_node_count == 0)
     {
         MCTreeNode *child = new MCTreeNode();
         *child = *root;
         child->env_tm = env_tm;
-        child->children_nodes.clear();
         child->parent = root;
-        root->children_nodes.push_back(child);
+        root->add_new_child(child);
         child = nullptr;
     }
     // For each child nodes, update the record variables of experts, e.t. busy time  for metrics calculating
-    for (MCTreeNode *child : root->children_nodes)
+    for (int i = 0; i < root->child_node_count; ++i)
     {
-        for (int i = 0; i < child->expert_status.size(); ++i)
-            child->expert_status[i].monte_one_tick();
+        for (int j = 0; j < root->children_node[i]->expert_status.size(); ++j)
+            root->children_node[i]->expert_status[j].monte_one_tick();
     }
     return true;
 }
@@ -474,7 +497,7 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
         if (!expand_flag)
             break;
         MCTreeNode *tmp = curr_node;
-        curr_node = curr_node->children_nodes[0];
+        curr_node = curr_node->children_node[0];
         if (tmp != root)
             delete tmp;
         tmp = nullptr;
@@ -487,11 +510,14 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
         root->num_sim++;
         if (curr_node != root)
         {
-            for (int i = 0; i < curr_node->children_nodes.size(); ++i)
-                delete curr_node->children_nodes[i];
+            for (int i = 0; i < curr_node->child_node_count; ++i)
+            {
+                delete curr_node->children_node[i];
+                curr_node->children_node[i] = nullptr;
+            }
             delete curr_node;
         }
-        root->children_nodes.clear();
+        root->clear_children_nodes();
         std::cout << "Monte Carlo simulation terminated at non finish stat, simulation terminated at depth " << simu_depth << std::endl;
         return;
     }
@@ -533,13 +559,16 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
     // Backpropagate
     if (curr_node != root)
     {
-        for (int i = 0; i < curr_node->children_nodes.size(); ++i)
-            delete curr_node->children_nodes[i];
+        for (int i = 0; i < curr_node->child_node_count; ++i)
+        {
+            delete curr_node->children_node[i];
+            curr_node->children_node[i] = nullptr;
+        }
         delete curr_node;
     }
     root->num_sim++;
     root->reward_sum += score;
-    root->children_nodes.clear();
+    root->clear_children_nodes();
 }
 
 /**
@@ -575,8 +604,10 @@ void run_alg(MCTreeNode *root, std::vector<std::vector<int>> &expert_groups, int
             }
         }
         // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
+        std::cout << "In main iteration, expanding best leaf node...." << std::endl;
         for (int i = 0; i < min_num_expand_child; ++i)
             expand(best_leaf_node, expert_groups);
+        std::cout << "Expanding best leaf node finish." << std::endl;
         sleep(1);
         // remove from leaf_nodes record, and add new leaf nodes
         for (int i = 0; i < leaf_nodes.size(); ++i)
@@ -587,20 +618,20 @@ void run_alg(MCTreeNode *root, std::vector<std::vector<int>> &expert_groups, int
                 break;
             }
         }
-        for (MCTreeNode *child_node : best_leaf_node->children_nodes)
-            leaf_nodes.push_back(child_node);
+        for (int i = 0; i < best_leaf_node->child_node_count; ++i)
+            leaf_nodes.push_back(best_leaf_node->children_node[i]);
 
-        if (!best_leaf_node->children_nodes.empty())
+        if (best_leaf_node->child_node_count > 0)
         {
             // simulate from the child nodes till terminate state, calc score and backpropagate
             std::cout << "\t start simulations from child nodes...." << std::endl;
             sleep(1);
-            std::uniform_int_distribution<int> rand_dist(0, best_leaf_node->children_nodes.size() - 1);
+            std::uniform_int_distribution<int> rand_dist(0, best_leaf_node->child_node_count - 1);
             for (int i = 0; i < num_simulate_each; ++i)
             {
-                for (int j = 0; j < best_leaf_node->children_nodes.size(); ++j)
+                for (int j = 0; j < best_leaf_node->child_node_count; ++j)
                 {
-                    simulate(best_leaf_node->children_nodes[j], expert_groups);
+                    simulate(best_leaf_node->children_node[j], expert_groups);
                 }
             }
         }
