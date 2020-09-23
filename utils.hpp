@@ -60,6 +60,11 @@ namespace utils
             }
         }
 
+        ~Task()
+        {
+            this->each_stay_dura.clear();
+        }
+
         Task &operator=(const Task &tsk)
         {
             if (this != &tsk)
@@ -119,7 +124,13 @@ namespace utils
         ~Expert()
         {
             for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
-                delete process_tasks[i];
+            {
+                if (process_tasks[i])
+                {
+                    delete process_tasks[i];
+                    process_tasks[i] = nullptr;
+                }
+            }
         }
 
         Expert &operator=(const Expert &expt)
@@ -128,8 +139,9 @@ namespace utils
             {
                 this->id = expt.id;
                 this->process_dura.clear();
-                for (int val : expt.process_dura)
-                    this->process_dura.push_back(val);
+                this->process_dura.resize(expt.process_dura.size());
+                for (int i = 0; i < expt.process_dura.size(); ++i)
+                    this->process_dura[i] = expt.process_dura[i];
                 for (int i = 0; i < EXPERT_MAX_PARALLEL; ++i)
                 {
                     this->process_tasks[i] = expt.process_tasks[i];

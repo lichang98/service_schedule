@@ -44,11 +44,11 @@ struct MCTreeNode
             this->reward_sum = 0;
             this->parent = nullptr;
             this->num_finish_tasks = node.num_finish_tasks;
-            this->task_status = std::vector<utils::Task>(node.task_status.size());
-            for (int i = 0; i < task_status.size(); ++i)
+            this->task_status.resize(node.task_status.size());
+            for (int i = 0; i < node.task_status.size(); ++i)
                 this->task_status[i] = node.task_status[i];
-            this->expert_status = std::vector<utils::Expert>(node.expert_status.size());
-            for (int i = 0; i < expert_status.size(); ++i)
+            this->expert_status.resize(node.expert_status.size());
+            for (int i = 0; i < node.expert_status.size(); ++i)
                 this->expert_status[i] = node.expert_status[i];
         }
         return *this;
@@ -253,6 +253,9 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                                 std::cout << __LINE__
                                           << " simulation terminate, reason=task assigned to expert failed at init stage, failed tasks = "
                                           << selected_task_idx << std::endl;
+                                root->children_nodes.pop_back();
+                                delete child;
+                                child = nullptr;
                                 return false;
                             }
                             tsk = nullptr;
@@ -271,6 +274,10 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
             if (tsk->task_curr_via_count == utils::TASK_MAX_MIGRATION)
             {
                 std::cout << __LINE__ << " simulation terminate, reason=task at a non-suitable expert with max migration" << std::endl;
+                root->children_nodes.pop_back();
+                delete child;
+                child = nullptr;
+                tsk = nullptr;
                 return false;
             }
             else
@@ -300,6 +307,10 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                     {
                         // no available suit expert
                         std::cout << __LINE__ << " simulation terminate, reason=next stage is max migration restrict, not found suitable one" << std::endl;
+                        root->children_nodes.pop_back();
+                        delete child;
+                        child = nullptr;
+                        tsk = nullptr;
                         return false;
                     }
                 }
@@ -315,6 +326,10 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                             if (!assign_rand_expert(child, selected_task_idx, env_tm, dist_action_no_wait))
                             {
                                 std::cout << __LINE__ << " simulation terminate, reason=task force migrate, not found suitable next expert" << std::endl;
+                                root->children_nodes.pop_back();
+                                delete child;
+                                child = nullptr;
+                                tsk = nullptr;
                                 return false;
                             }
                         }
@@ -344,6 +359,10 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                 {
                     std::cout << __LINE__
                               << " simulation terminate, reason=continuing executing on current expert, reach max exec time restrict" << std::endl;
+                    root->children_nodes.pop_back();
+                    delete child;
+                    child = nullptr;
+                    selected_task = nullptr;
                     return false;
                 }
                 else if (env_tm == selected_task->task_stay_due_tm[selected_task->task_curr_via_count - 1])
@@ -381,6 +400,10 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                     {
                         std::cout << __LINE__ << " simulation terminate, reason=continuing executing on current expert, reach max exec time restrict"
                                   << std::endl;
+                        root->children_nodes.pop_back();
+                        delete child;
+                        child = nullptr;
+                        selected_task = nullptr;
                         return false;
                     }
                     else if (env_tm == selected_task->task_stay_due_tm[selected_task->task_curr_via_count - 1])
@@ -443,6 +466,7 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
     bool reach_end = false, expand_flag = true;
     std::cout << "Start simulation..." << std::endl;
     int simu_depth = 1;
+    sleep(1);
     while (!reach_end && expand_flag)
     {
         simu_depth++;
@@ -462,7 +486,11 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
     {
         root->num_sim++;
         if (curr_node != root)
+        {
+            for (int i = 0; i < curr_node->children_nodes.size(); ++i)
+                delete curr_node->children_nodes[i];
             delete curr_node;
+        }
         root->children_nodes.clear();
         std::cout << "Monte Carlo simulation terminated at non finish stat, simulation terminated at depth " << simu_depth << std::endl;
         return;
@@ -504,7 +532,11 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
     }
     // Backpropagate
     if (curr_node != root)
+    {
+        for (int i = 0; i < curr_node->children_nodes.size(); ++i)
+            delete curr_node->children_nodes[i];
         delete curr_node;
+    }
     root->num_sim++;
     root->reward_sum += score;
     root->children_nodes.clear();
