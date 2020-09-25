@@ -97,7 +97,20 @@ std::vector<std::vector<int>> spt_run(std::vector<utils::Task> &tasks, std::vect
                 if (curr_task->tm_stamp > env_tm)
                     continue;
                 int task_type = curr_task->type;
-                for (int expt_idx : group_experts[task_type])
+                std::vector<int> suit_expt_idxs(group_experts[task_type].size());
+                for(int j=0;j<group_experts[task_type].size();++j)
+                    suit_expt_idxs[j] = group_experts[task_type][j];
+                std::sort(suit_expt_idxs.begin(),suit_expt_idxs.end(),[&experts,task_type](const int a, const int b)->bool{
+                    if(experts[a].process_dura[task_type] != experts[b].process_dura[task_type])
+                        return experts[a].process_dura[task_type] < experts[b].process_dura[task_type];
+                    else if(experts[a].busy_total_time != experts[b].busy_total_time)
+                        return experts[a].busy_total_time < experts[b].busy_total_time;
+                    else if(experts[a].num_avail != experts[b].num_avail)
+                        return experts[a].num_avail > experts[b].num_avail;
+                    else
+                        return experts[a].id < experts[b].id;
+                });
+                for (int expt_idx : suit_expt_idxs)
                 {
                     if (experts[expt_idx].assign_task(curr_task))
                     {
