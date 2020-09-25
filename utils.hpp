@@ -138,7 +138,6 @@ namespace utils
             if (this != &expt)
             {
                 this->id = expt.id;
-                this->process_dura.clear();
                 this->process_dura.resize(expt.process_dura.size());
                 for (int i = 0; i < expt.process_dura.size(); ++i)
                     this->process_dura[i] = expt.process_dura[i];

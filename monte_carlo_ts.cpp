@@ -11,7 +11,7 @@ static std::vector<std::vector<int>> best_result; // each line contains three va
 static double best_score = 0;
 static std::default_random_engine random_gen;
 static int force_migrate_max_exec_tm = 1000; // if task has executed on a expert for more than the value, the task must be forced to migrate
-static const int MAX_NUM_CHILDREN = 10;
+static const int MAX_NUM_CHILDREN = 5;
 
 // Monte Carlo Tree Node Structure
 // The Node records the state of tasks and experts at certain time stamp
@@ -62,7 +62,8 @@ struct MCTreeNode
 
     void add_new_child(MCTreeNode *child)
     {
-        this->children_node[this->child_node_count++] = child;
+        this->children_node[this->child_node_count] = child;
+        this->child_node_count++;
     }
 
     /**
@@ -70,7 +71,8 @@ struct MCTreeNode
      */
     void remove_last_child()
     {
-        this->children_node[--this->child_node_count] = nullptr;
+        --this->child_node_count;
+        this->children_node[this->child_node_count] = nullptr;
     }
 
     void clear_children_nodes()
@@ -110,7 +112,7 @@ std::vector<std::vector<int>> group_expert_by_type(std::vector<utils::Expert> &e
     return expert_groups;
 }
 
-bool assign_to_expert(MCTreeNode *node, int selected_task_idx, int env_tm, int selected_expert_idx)
+bool assign_to_expert(MCTreeNode *&node, int selected_task_idx, int env_tm, int selected_expert_idx)
 {
     utils::Task *tsk = &node->task_status[selected_task_idx];
     if (tsk->task_curr_via_count == 0)
@@ -125,7 +127,7 @@ bool assign_to_expert(MCTreeNode *node, int selected_task_idx, int env_tm, int s
     return true;
 }
 
-bool assign_rand_expert(MCTreeNode *node, int selected_task_idx, int env_tm, std::uniform_int_distribution<int> &dist, int max_num_assign_retry = 100)
+bool assign_rand_expert(MCTreeNode *&node, int selected_task_idx, int env_tm, std::uniform_int_distribution<int> &dist, int max_num_assign_retry = 100)
 {
     int random_action = dist(random_gen);
     // std::cout << "Task " << selected_task_idx << " first time assigned to expert is " << random_action << " need check...." << std::endl;
@@ -154,7 +156,7 @@ bool assign_rand_expert(MCTreeNode *node, int selected_task_idx, int env_tm, std
     return true;
 }
 
-bool assign_suit_expert(MCTreeNode *node, int selected_task_idx, int env_tm,
+bool assign_suit_expert(MCTreeNode *&node, int selected_task_idx, int env_tm,
                         std::vector<std::vector<int>> &expt_group, int max_num_assign_retry = 100)
 {
     // Choose from the suitable expert group
@@ -195,7 +197,7 @@ bool assign_suit_expert(MCTreeNode *node, int selected_task_idx, int env_tm,
  * @param possible_percent_stick_curr: the possibility for choosing stick to current expert, continuing executing
  * @param possible_favor_suit_expert: the possibility of assigning current task to suitable expert to process
  */
-bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num_max_retry = 10, int num_expand = 10,
+bool expand(MCTreeNode *&root, std::vector<std::vector<int>> &expt_group, int num_max_retry = 10, int num_expand = MAX_NUM_CHILDREN - 1,
             int possible_beg_not_wait = 95, int possible_percent_stick_curr = 98, int possible_favor_suit_expert = 98)
 {
     // randomly select valid action to expand new nodes, simulated to terminal state
@@ -275,6 +277,8 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                             }
                             else
                             {
+                                avail_suit_expert_idxs.clear();
+                                avail_no_suit_expert_idxs.clear();
                                 std::cout << __LINE__
                                           << " simulation terminate, reason=task assigned to expert failed at init stage, failed tasks = "
                                           << selected_task_idx << std::endl;
@@ -283,6 +287,8 @@ bool expand(MCTreeNode *root, std::vector<std::vector<int>> &expt_group, int num
                                 child = nullptr;
                                 return false;
                             }
+                            avail_suit_expert_idxs.clear();
+                            avail_no_suit_expert_idxs.clear();
                             tsk = nullptr;
                         }
                     }
@@ -510,11 +516,7 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
         root->num_sim++;
         if (curr_node != root)
         {
-            for (int i = 0; i < curr_node->child_node_count; ++i)
-            {
-                delete curr_node->children_node[i];
-                curr_node->children_node[i] = nullptr;
-            }
+            curr_node->clear_children_nodes();
             delete curr_node;
         }
         root->clear_children_nodes();
@@ -559,11 +561,7 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
     // Backpropagate
     if (curr_node != root)
     {
-        for (int i = 0; i < curr_node->child_node_count; ++i)
-        {
-            delete curr_node->children_node[i];
-            curr_node->children_node[i] = nullptr;
-        }
+        curr_node->clear_children_nodes();
         delete curr_node;
     }
     root->num_sim++;
@@ -583,7 +581,7 @@ void simulate(MCTreeNode *root, std::vector<std::vector<int>> &expt_groups)
  *              selected for next iteration
  */
 void run_alg(MCTreeNode *root, std::vector<std::vector<int>> &expert_groups, int max_iter = 1000,
-             int min_num_expand_child = 10, int num_simulate_each = 100)
+             int min_num_expand_child = MAX_NUM_CHILDREN, int num_simulate_each = 100)
 {
     std::vector<MCTreeNode *> leaf_nodes;
     std::default_random_engine random_gen;
@@ -605,7 +603,7 @@ void run_alg(MCTreeNode *root, std::vector<std::vector<int>> &expert_groups, int
         }
         // expand best leaf node and simulate from children nodes of the best leaf node, backpropagate and update
         std::cout << "In main iteration, expanding best leaf node...." << std::endl;
-        for (int i = 0; i < min_num_expand_child; ++i)
+        for (int i = 0; i < min_num_expand_child - 1; ++i)
             expand(best_leaf_node, expert_groups);
         std::cout << "Expanding best leaf node finish." << std::endl;
         sleep(1);
@@ -624,7 +622,7 @@ void run_alg(MCTreeNode *root, std::vector<std::vector<int>> &expert_groups, int
         if (best_leaf_node->child_node_count > 0)
         {
             // simulate from the child nodes till terminate state, calc score and backpropagate
-            std::cout << "\t start simulations from child nodes...." << std::endl;
+            std::cout << "\t start simulations from child nodes, total num child nodes=" << best_leaf_node->child_node_count << " ...." << std::endl;
             sleep(1);
             std::uniform_int_distribution<int> rand_dist(0, best_leaf_node->child_node_count - 1);
             for (int i = 0; i < num_simulate_each; ++i)
