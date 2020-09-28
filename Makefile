@@ -1,2 +1,2 @@
-a.out: spt_benchmark.cpp
-	g++ spt_benchmark.cpp -o a.out
+a.out: mcts.cpp
+	g++ mcts.cpp -o a.out

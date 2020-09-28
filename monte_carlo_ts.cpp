@@ -5,11 +5,11 @@
 #include "metrics.hpp"
 #include <unistd.h>
 #include <random>
-#include <omp.h>
+#include <time.h>
 
 static std::vector<std::vector<int>> best_result; // each line contains three value: task id, expert id, start time
 static double best_score = 0;
-static std::default_random_engine random_gen;
+static std::default_random_engine random_gen{static_cast<unsigned long int>(time(NULL))};
 static int force_migrate_max_exec_tm = 1000; // if task has executed on a expert for more than the value, the task must be forced to migrate
 static const int MAX_NUM_CHILDREN = 5;
 
@@ -275,18 +275,18 @@ bool expand(MCTreeNode *&root, std::vector<std::vector<int>> &expt_group, int nu
                             {
                                 assign_to_expert(child, selected_task_idx, env_tm, avail_no_suit_expert_idxs[0]);
                             }
-                            else
-                            {
-                                avail_suit_expert_idxs.clear();
-                                avail_no_suit_expert_idxs.clear();
-                                std::cout << __LINE__
-                                          << " simulation terminate, reason=task assigned to expert failed at init stage, failed tasks = "
-                                          << selected_task_idx << std::endl;
-                                root->remove_last_child();
-                                delete child;
-                                child = nullptr;
-                                return false;
-                            }
+                            // else
+                            // {
+                            //     avail_suit_expert_idxs.clear();
+                            //     avail_no_suit_expert_idxs.clear();
+                            //     std::cout << __LINE__
+                            //               << " simulation terminate, reason=task assigned to expert failed at init stage, failed tasks = "
+                            //               << selected_task_idx << std::endl;
+                            //     root->remove_last_child();
+                            //     delete child;
+                            //     child = nullptr;
+                            //     return false;
+                            // }
                             avail_suit_expert_idxs.clear();
                             avail_no_suit_expert_idxs.clear();
                             tsk = nullptr;
