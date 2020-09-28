@@ -5,6 +5,7 @@
 #pragma once
 #include "monte_utils.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace monte_metrics
 {
