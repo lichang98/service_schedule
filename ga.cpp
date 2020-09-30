@@ -52,19 +52,26 @@ std::vector<std::vector<int>> ga_init_solutions(std::vector<monte_utils::Task> &
     {
         for (int j = 0; j < tasks.size(); ++j)
         {
-            int start_pos = RANDOM(j * monte_utils::TASK_MAX_MIGRATION, j * monte_utils::TASK_MAX_MIGRATION + 4);
-            while (start_pos < j * monte_utils::TASK_MAX_MIGRATION + 4)
+            int start_pos = RANDOM(j * monte_utils::TASK_MAX_MIGRATION, (j + 1) * monte_utils::TASK_MAX_MIGRATION - 1);
+            int prev_expert_idx = -1;
+            while (start_pos < (j + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
             {
                 // set not suitable experts idx
                 int rand_group = RANDOM(0, expt_groups.size() - 1);
-                while (rand_group == tasks[j].type)
+                int expert_idx = expt_groups[rand_group][RANDOM(0, expt_groups[rand_group].size() - 1)];
+                // make sure that the consecutive two experts are not same
+                while (expert_idx == prev_expert_idx)
+                {
                     rand_group = RANDOM(0, expt_groups.size() - 1);
-                solutions[i][start_pos] = expt_groups[rand_group][RANDOM(0, expt_groups[rand_group].size() - 1)];
+                    expert_idx = expt_groups[rand_group][RANDOM(0, expt_groups[rand_group].size() - 1)];
+                }
+                prev_expert_idx = expert_idx;
+                solutions[i][start_pos] = expert_idx;
                 start_pos++;
             }
             // the last expert must be suitable
             int group_idx = tasks[j].type;
-            solutions[i][start_pos] = expt_groups[group_idx][RANDOM(0, expt_groups[group_idx].size())];
+            solutions[i][start_pos] = expt_groups[group_idx][RANDOM(0, expt_groups[group_idx].size() - 1)];
         }
     }
     return solutions;
@@ -76,14 +83,14 @@ std::vector<std::vector<int>> ga_init_solutions(std::vector<monte_utils::Task> &
 std::vector<int> crossover(std::vector<int> &s1, std::vector<int> &s2)
 {
     std::vector<int> s_n = std::vector<int>(s1.size(), -1);
-    for (int i = 0; i < s1.size(); i += 10)
+    for (int i = 0; i < s1.size(); i += 2 * monte_utils::TASK_MAX_MIGRATION)
     {
-        for (int j = i; j < i + 5; ++j)
+        for (int j = i; j < i + monte_utils::TASK_MAX_MIGRATION; ++j)
             s_n[j] = s1[j];
     }
-    for (int i = 5; i < s2.size(); i += 10)
+    for (int i = monte_utils::TASK_MAX_MIGRATION; i < s2.size(); i += 2 * monte_utils::TASK_MAX_MIGRATION)
     {
-        for (int j = i; j < i + 5; ++j)
+        for (int j = i; j < i + monte_utils::TASK_MAX_MIGRATION; ++j)
             s_n[j] = s2[j];
     }
     return s_n;
@@ -103,16 +110,22 @@ void mutation(std::vector<int> &s, std::vector<monte_utils::Task> &tasks, std::v
     for (const int &idx : mut_idxs)
     {
         int start_pos = idx * monte_utils::TASK_MAX_MIGRATION;
-        start_pos = RANDOM(start_pos, start_pos + 4);
+        start_pos = RANDOM(start_pos, start_pos + monte_utils::TASK_MAX_MIGRATION - 1);
         for (int i = idx * monte_utils::TASK_MAX_MIGRATION; i < start_pos; ++i)
             s[i] = -1;
-        while (start_pos < idx * monte_utils::TASK_MAX_MIGRATION + 4)
+        int prev_expert_idx = -1;
+        while (start_pos < (idx + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
         {
             // set not suitable experts idx
             int rand_group = RANDOM(0, expt_groups.size() - 1);
-            while (rand_group == tasks[idx].type)
+            int curr_expert_idx = expt_groups[rand_group][RANDOM(0, expt_groups[rand_group].size() - 1)];
+            while (curr_expert_idx == prev_expert_idx)
+            {
                 rand_group = RANDOM(0, expt_groups.size() - 1);
-            s[start_pos] = expt_groups[rand_group][expt_groups[rand_group].size() - 1];
+                curr_expert_idx = expt_groups[rand_group][RANDOM(0, expt_groups[rand_group].size() - 1)];
+            }
+            prev_expert_idx = curr_expert_idx;
+            s[start_pos] = curr_expert_idx;
             start_pos++;
         }
         // last expert must be suitable
@@ -146,8 +159,7 @@ std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tas
  */
 std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std::vector<int> &s,
                                                                              std::vector<monte_utils::Task> tasks,
-                                                                             std::vector<monte_utils::Expert> experts,
-                                                                             std::vector<std::vector<int>> &expt_groups)
+                                                                             std::vector<monte_utils::Expert> experts)
 {
     int env_tm = 0, num_finish = 0;
     std::vector<int> start_poses(tasks.size(), 0);
@@ -164,7 +176,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
         // firstly check tasks that reach the final expert
         for (int i = 0; i < tasks.size(); ++i)
         {
-            if (finish_flag[i] || start_poses[i] < i * monte_utils::TASK_MAX_MIGRATION + 4)
+            if (finish_flag[i] || start_poses[i] < (i + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
                 continue;
             int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
             if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
@@ -177,8 +189,21 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
         }
         for (int i = 0; i < tasks.size(); ++i)
         {
-            if (finish_flag[i] || start_poses[i] == i * monte_utils::TASK_MAX_MIGRATION + 4)
+            if (finish_flag[i] || start_poses[i] == (i + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
                 continue;
+            // need to check if task has already finished
+            if (tasks[i].curr_migrate_count > 0)
+            {
+                int curr_process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
+                if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + curr_process_tm + 1)
+                {
+                    // task finish
+                    tasks[i].finish_tm = env_tm;
+                    finish_flag[i] = true;
+                    num_finish++;
+                    continue;
+                }
+            }
             int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
             if (experts[next_expt_idx].num_idle_channel > 0)
             {
@@ -188,6 +213,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
                 tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
                 tasks[i].curr_migrate_count++;
+                start_poses[i]++;
                 // release previous expeert resource
                 if (tasks[i].curr_migrate_count > 1)
                 {
@@ -208,6 +234,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                     if (experts[next_expt_idx].channels[j] == -1)
                     {
                         experts[next_expt_idx].channels[j] = i;
+                        experts[next_expt_idx].num_idle_channel--;
                         break;
                     }
                 }
@@ -219,6 +246,8 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 experts[i].busy_sum++;
         }
         env_tm++;
+        if (env_tm % 100 == 0)
+            std::cout << "\t\tenv_tm=" << env_tm << ", num_finish=" << num_finish << ", total=" << tasks.size() << std::endl;
     }
 
     std::vector<std::vector<int>> result = extract_result(tasks);
@@ -231,14 +260,17 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
 std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
                                      std::vector<monte_utils::Expert> &experts, std::vector<std::vector<int>> &expt_groups)
 {
+    std::cout << "Initial solutions..." << std::endl;
     std::vector<std::vector<int>> solutions = ga_init_solutions(tasks, expt_groups);
     std::vector<std::vector<int>> best_result;
+    std::cout << "Start GA method...." << std::endl;
     for (int iter = 1; iter <= NUM_ITERS; ++iter)
     {
         std::vector<std::tuple<std::vector<std::vector<int>>, double>> result_scores;
+        std::cout << "Iter #" << iter << ": start simulations for solutions..." << std::endl;
         for (int i = 0; i < solutions.size(); ++i)
-            result_scores.emplace_back(convert_solution_to_result(solutions[i], tasks, experts, expt_groups));
-        double max_score = 0, min_score = 0;
+            result_scores.emplace_back(convert_solution_to_result(solutions[i], tasks, experts));
+        double max_score = 0, min_score = 0x7fffffff;
         int max_score_idx = 0, min_score_idx = 0;
         for (int i = 0; i < result_scores.size(); ++i)
         {
@@ -259,14 +291,17 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
             s2 = RANDOM(0, result_scores.size() - 1);
         // crossover
         std::vector<int> s_nw = crossover(solutions[max_score_idx], solutions[s2]);
-        solutions.erase(solutions.begin() + min_score_idx);
         solutions.emplace_back(s_nw);
         // mutations
         for (int i = 0; i < NUM_MUTATIONS; ++i)
         {
             int idx = RANDOM(0, solutions.size() - 1);
+            while (idx == max_score_idx)
+                idx = RANDOM(0, solutions.size() - 1);
             mutation(solutions[idx], tasks, expt_groups);
         }
+        solutions.erase(solutions.begin() + min_score_idx);
+        std::cout << "\tbest score=" << max_score << std::endl;
     }
     return best_result;
 }
