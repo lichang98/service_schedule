@@ -1,2 +1,2 @@
-a.out: mcts.cpp
-	g++ mcts.cpp -o a.out
+a.out: ga.cpp
+	g++ ga.cpp -o a.out

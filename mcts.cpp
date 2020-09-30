@@ -16,7 +16,7 @@ static const int MAX_EXPAND_CHILD = 8;
 static const int URGENT_THRESHOLD = 10;
 static const int FAVOR_EPSILON = 30;
 static const int MAX_SIMULATION_DEPTH = 10000;
-static const int NUM_SIMULATION = MAX_EXPAND_CHILD * 8;
+static const int NUM_SIMULATION = 8;
 static const int MAX_ITER = 10000;
 
 struct MCTNode
@@ -167,25 +167,23 @@ bool try_assign_suit_expert(MCTNode *node, int env_tm, int selected_task_idx, st
     if (!flag_assign)
     {
         // not randomly fouond a suitable expert, traverse all suitable expert and then all other experts
-        for (int i = 0; i < expert_groups[task->type].size() && !flag_assign; ++i)
+        for (int &expt_idx : expert_groups[task->type])
         {
-            flag_assign = assign_task_to_expert(node->tasks[selected_task_idx], node->experts[expert_groups[task->type][i]],
-                                                selected_task_idx, expert_groups[task->type][i], env_tm);
+            flag_assign = assign_task_to_expert(node->tasks[selected_task_idx], node->experts[expt_idx],
+                                                selected_task_idx, expt_idx, env_tm);
+            if (flag_assign)
+                break;
         }
     }
     if (!flag_assign)
     {
         // try randomly select from not suitable experts
-        for (int i = 0; i < expert_groups.size() && !flag_assign; ++i)
+        for (int i = 0; i < num_retry && !flag_assign; ++i)
         {
-            if (i == task->type)
-                continue;
-            for (int j = 0; j < num_retry && !flag_assign; ++j)
-            {
-                int idx = RANDOM(0, expert_groups[i].size() - 1);
-                flag_assign = assign_task_to_expert(node->tasks[selected_task_idx], node->experts[expert_groups[i][idx]],
-                                                    selected_task_idx, expert_groups[i][idx], env_tm);
-            }
+            int group_idx = RANDOM(0, expert_groups.size() - 1);
+            int expt_idx = RANDOM(0, expert_groups[group_idx].size() - 1);
+            flag_assign = assign_task_to_expert(node->tasks[selected_task_idx], node->experts[expert_groups[group_idx][expt_idx]],
+                                                selected_task_idx, expert_groups[group_idx][expt_idx], env_tm);
         }
     }
     if (!flag_assign)
