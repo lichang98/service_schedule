@@ -1,2 +1,2 @@
 a.out: ga.cpp
-	g++ ga.cpp -o a.out -g
+	g++ ga.cpp -o a.out -O3

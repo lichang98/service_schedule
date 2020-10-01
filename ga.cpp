@@ -143,9 +143,7 @@ std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tas
     {
         for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
         {
-            result.emplace_back(std::vector<int>({tasks[i].task_id,
-                                                  tasks[i].each_stay_expert_id[j],
-                                                  tasks[i].assign_tm[j]}));
+            result.emplace_back(std::vector<int>({tasks[i].task_id, tasks[i].each_stay_expert_id[j], tasks[i].assign_tm[j]}));
         }
     }
     return result;
@@ -164,10 +162,10 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
     int env_tm = 0, num_finish = 0;
     std::vector<int> start_poses(tasks.size(), 0);
     std::vector<bool> finish_flag(tasks.size(), false);
-    for (int i = 0; i < s.size(); i += monte_utils::TASK_MAX_MIGRATION)
+    for (int i = 0; i < tasks.size(); ++i)
     {
         int start_pos = 0;
-        while (s[start_pos] == -1)
+        while (s[i * monte_utils::TASK_MAX_MIGRATION + start_pos] == -1)
             start_pos++;
         start_poses[i] = start_pos;
     }
@@ -176,20 +174,57 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
         // firstly check tasks that reach the final expert
         for (int i = 0; i < tasks.size(); ++i)
         {
-            if (finish_flag[i] || start_poses[i] < (i + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
+            if (finish_flag[i] || start_poses[i] < monte_utils::TASK_MAX_MIGRATION - 1)
                 continue;
-            int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-            if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
+            if (tasks[i].curr_migrate_count > 0)
             {
-                // finish
-                tasks[i].finish_tm = env_tm;
-                finish_flag[i] = true;
-                num_finish++;
+                int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
+                if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
+                {
+                    // finish
+                    tasks[i].finish_tm = env_tm;
+                    finish_flag[i] = true;
+                    num_finish++;
+                    // release resource of expert
+                    int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
+                    for (int j = 0; j < monte_utils::TASK_MAX_MIGRATION; ++j)
+                    {
+                        if (experts[expt_idx].channels[j] == i)
+                        {
+                            experts[expt_idx].channels[j] = -1;
+                            experts[expt_idx].num_idle_channel++;
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // This case is when task sechedule is [-1,-1,-1,-1,x] where only via one expert
+                int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
+                if (experts[next_expt_idx].num_idle_channel > 0)
+                {
+                    // assign to expert
+                    tasks[i].start_process_tm = env_tm;
+                    tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
+                    tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
+                    tasks[i].curr_migrate_count++;
+                    // register on expert
+                    for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
+                    {
+                        if (experts[next_expt_idx].channels[j] == -1)
+                        {
+                            experts[next_expt_idx].channels[j] = i;
+                            experts[next_expt_idx].num_idle_channel--;
+                            break;
+                        }
+                    }
+                }
             }
         }
         for (int i = 0; i < tasks.size(); ++i)
         {
-            if (finish_flag[i] || start_poses[i] == (i + 1) * monte_utils::TASK_MAX_MIGRATION - 1)
+            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION - 1)
                 continue;
             // need to check if task has already finished
             if (tasks[i].curr_migrate_count > 0)
@@ -201,6 +236,17 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                     tasks[i].finish_tm = env_tm;
                     finish_flag[i] = true;
                     num_finish++;
+                    // release resource of expert
+                    int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
+                    for (int j = 0; j < monte_utils::TASK_MAX_MIGRATION; ++j)
+                    {
+                        if (experts[expt_idx].channels[j] == i)
+                        {
+                            experts[expt_idx].channels[j] = -1;
+                            experts[expt_idx].num_idle_channel++;
+                            break;
+                        }
+                    }
                     continue;
                 }
             }
@@ -214,7 +260,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
                 tasks[i].curr_migrate_count++;
                 start_poses[i]++;
-                // release previous expeert resource
+                // release previous expert resource
                 if (tasks[i].curr_migrate_count > 1)
                 {
                     int prev_expert_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 2];
@@ -246,7 +292,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 experts[i].busy_sum++;
         }
         env_tm++;
-        if (env_tm % 100 == 0)
+        if (env_tm % 10000 == 0)
             std::cout << "\t\tenv_tm=" << env_tm << ", num_finish=" << num_finish << ", total=" << tasks.size() << std::endl;
     }
 
@@ -314,7 +360,8 @@ void save_result(std::vector<std::vector<int>> &result)
     time_t date = time(nullptr);
     tm *date_tm = localtime(&date);
     char result_tm_stamp[50];
-    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000, date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
+    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000,
+            date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
     utils::save_result(strcat(utils::PRED_RESULT_PREFIX, result_tm_stamp), result);
 }
 
