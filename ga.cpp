@@ -226,6 +226,15 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
                 tasks[i].curr_migrate_count++;
                 start_poses[i]++;
+                for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
+                {
+                    if (experts[next_expt_idx].channels[j] == -1)
+                    {
+                        experts[next_expt_idx].channels[j] = i;
+                        experts[next_expt_idx].num_idle_channel--;
+                        break;
+                    }
+                }
             }
         }
 
@@ -235,11 +244,12 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 experts[i].busy_sum++;
         }
         env_tm++;
+        if (env_tm % 1000 == 0)
+            std::cout << "\t\ttime=" << env_tm << ", num finish=" << num_finish << std::endl;
     }
+    std::cout << std::endl;
     std::vector<std::vector<int>> result = extract_result(tasks);
     double score = monte_metrics::score(tasks, experts);
-    std::cout << "score=" << score << std::endl;
-    sleep(1);
     return std::make_tuple(result, score);
 }
 
