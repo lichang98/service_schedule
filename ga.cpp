@@ -151,6 +151,46 @@ std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tas
 }
 
 /**
+ * Detect dependency cycle
+ * link matrix representation of graph
+ * pos (i,j) value k means there are k tasks try to migrate from expert i to expert j
+ */
+bool detect_dep_cycle(std::vector<std::vector<int>> &link_mat)
+{
+    int row = link_mat.size(), col = link_mat[0].size();
+    bool flag = true;
+    while (flag)
+    {
+        flag = false;
+        for (int i = 0; i < row; ++i)
+        {
+            bool zero_out = true;
+            for (int j = 0; j < col && zero_out; ++j)
+            {
+                if (link_mat[i][j] > 0)
+                    zero_out = false;
+            }
+            if (zero_out)
+            {
+                flag = true;
+                // remove coresponding column
+                for (int ln = 0; ln < row; ++ln)
+                {
+                    if (link_mat[ln][i] > 0)
+                        link_mat[ln][i]=0;
+                }
+            }
+        }
+    }
+    flag = false;
+    for (int i = 0; i < row && !flag; ++i)
+        for (int j = 0; j < col && !flag; ++j)
+            if (link_mat[i][j] > 0)
+                flag = true;
+    return flag;
+}
+
+/**
  * convert solution into result
  * The function will simulate according to the solution, tasks and experts's record variables will be changed
  * the result is formed with array of [task id , expert id, time]
@@ -172,6 +212,29 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
     }
     while (num_finish < tasks.size())
     {
+
+        // detect deps cycle , test
+        std::vector<std::vector<int>> link_mat(experts.size(), std::vector<int>(experts.size(), 0));
+        for (int i = 0; i < tasks.size(); ++i)
+        {
+            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION || tasks[i].curr_migrate_count == 0)
+                continue;
+            int prev_expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1],
+                next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
+            link_mat[prev_expt_idx][next_expt_idx]++;
+        }
+        std::cout << "start detection.." << std::endl;
+        if (detect_dep_cycle(link_mat))
+        {
+            std::cout << "detected cycles.....!!!!" << std::endl;
+            sleep(1);
+        }
+        else
+        {
+            std::cout << "no cycle" << std::endl;
+        }
+        
+
         // firstly check if tasks have finished on current expert
         for (int i = 0; i < tasks.size(); ++i)
         {
@@ -244,7 +307,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 experts[i].busy_sum++;
         }
         env_tm++;
-        if (env_tm % 1000 == 0)
+        if (env_tm % 10 == 0)
             std::cout << "\t\ttime=" << env_tm << ", num finish=" << num_finish << std::endl;
     }
     std::cout << std::endl;
