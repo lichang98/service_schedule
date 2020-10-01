@@ -11,6 +11,7 @@
 #include <ctime>
 #include <set>
 #include <tuple>
+#include <unistd.h>
 
 #define RANDOM(low, high) ((int)(rand() % (high - low + 1) + low))
 
@@ -171,133 +172,75 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
     }
     while (num_finish < tasks.size())
     {
-        // firstly check tasks that reach the final expert
+        // firstly check if tasks have finished on current expert
         for (int i = 0; i < tasks.size(); ++i)
         {
-            if (finish_flag[i] || start_poses[i] < monte_utils::TASK_MAX_MIGRATION - 1)
+            if (tasks[i].curr_migrate_count == 0)
                 continue;
-            if (tasks[i].curr_migrate_count > 0)
+            int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
+            if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
             {
-                int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-                if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
-                {
-                    // finish
-                    tasks[i].finish_tm = env_tm;
-                    finish_flag[i] = true;
-                    num_finish++;
-                    // release resource of expert
-                    int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
-                    for (int j = 0; j < monte_utils::TASK_MAX_MIGRATION; ++j)
-                    {
-                        if (experts[expt_idx].channels[j] == i)
-                        {
-                            experts[expt_idx].channels[j] = -1;
-                            experts[expt_idx].num_idle_channel++;
-                            break;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // This case is when task sechedule is [-1,-1,-1,-1,x] where only via one expert
-                int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
-                if (experts[next_expt_idx].num_idle_channel > 0)
-                {
-                    // assign to expert
-                    tasks[i].start_process_tm = env_tm;
-                    tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
-                    tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
-                    tasks[i].curr_migrate_count++;
-                    // register on expert
-                    for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
-                    {
-                        if (experts[next_expt_idx].channels[j] == -1)
-                        {
-                            experts[next_expt_idx].channels[j] = i;
-                            experts[next_expt_idx].num_idle_channel--;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        for (int i = 0; i < tasks.size(); ++i)
-        {
-            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION - 1)
-                continue;
-            // need to check if task has already finished
-            if (tasks[i].curr_migrate_count > 0)
-            {
-                int curr_process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-                if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + curr_process_tm + 1)
-                {
-                    // task finish
-                    tasks[i].finish_tm = env_tm;
-                    finish_flag[i] = true;
-                    num_finish++;
-                    // release resource of expert
-                    int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
-                    for (int j = 0; j < monte_utils::TASK_MAX_MIGRATION; ++j)
-                    {
-                        if (experts[expt_idx].channels[j] == i)
-                        {
-                            experts[expt_idx].channels[j] = -1;
-                            experts[expt_idx].num_idle_channel++;
-                            break;
-                        }
-                    }
-                    continue;
-                }
-            }
-            int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
-            if (experts[next_expt_idx].num_idle_channel > 0)
-            {
-                // migrate
-                if (tasks[i].start_process_tm == -1)
-                    tasks[i].start_process_tm = env_tm;
-                tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
-                tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
-                tasks[i].curr_migrate_count++;
-                start_poses[i]++;
-                // release previous expert resource
-                if (tasks[i].curr_migrate_count > 1)
-                {
-                    int prev_expert_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 2];
-                    for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
-                    {
-                        if (experts[prev_expert_idx].channels[j] == i)
-                        {
-                            experts[prev_expert_idx].channels[j] = -1;
-                            experts[prev_expert_idx].num_idle_channel++;
-                            break;
-                        }
-                    }
-                }
-                // set resource of next expert
+                tasks[i].finish_tm = env_tm;
+                finish_flag[i] = true;
+                num_finish++;
+                // release channel of expert
+                int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
                 for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
                 {
-                    if (experts[next_expt_idx].channels[j] == -1)
+                    if (experts[expt_idx].channels[j] == i)
                     {
-                        experts[next_expt_idx].channels[j] = i;
-                        experts[next_expt_idx].num_idle_channel--;
+                        experts[expt_idx].channels[j] = -1;
+                        experts[expt_idx].num_idle_channel++;
                         break;
                     }
                 }
             }
         }
+
+        // check migration
+        for (int i = 0; i < tasks.size(); ++i)
+        {
+            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION || tasks[i].generate_tm > env_tm)
+                continue;
+            int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
+            if (experts[next_expt_idx].num_idle_channel > 0)
+            {
+                // release from previous expert
+                if (tasks[i].curr_migrate_count > 0)
+                {
+                    int prev_expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
+                    for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
+                    {
+                        if (experts[prev_expt_idx].channels[j] == i)
+                        {
+                            experts[prev_expt_idx].channels[j] = -1;
+                            experts[prev_expt_idx].num_idle_channel++;
+                            break;
+                        }
+                    }
+                }
+                // assign to expert
+                if (tasks[i].curr_migrate_count == 0)
+                    tasks[i].start_process_tm = env_tm;
+                tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
+                tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
+                tasks[i].curr_migrate_count++;
+                start_poses[i]++;
+            }
+        }
+
         for (int i = 0; i < experts.size(); ++i)
         {
             if (experts[i].num_idle_channel < monte_utils::EXPERT_MAX_PARALLEL)
                 experts[i].busy_sum++;
         }
         env_tm++;
-        if (env_tm % 10000 == 0)
-            std::cout << "\t\tenv_tm=" << env_tm << ", num_finish=" << num_finish << ", total=" << tasks.size() << std::endl;
     }
-
     std::vector<std::vector<int>> result = extract_result(tasks);
-    return std::make_tuple(result, monte_metrics::score(tasks, experts));
+    double score = monte_metrics::score(tasks, experts);
+    std::cout << "score=" << score << std::endl;
+    sleep(1);
+    return std::make_tuple(result, score);
 }
 
 /**
@@ -316,6 +259,7 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
         std::cout << "Iter #" << iter << ": start simulations for solutions..." << std::endl;
         for (int i = 0; i < solutions.size(); ++i)
             result_scores.emplace_back(convert_solution_to_result(solutions[i], tasks, experts));
+        std::cout << "\tsolutions simulate finish.." << std::endl;
         double max_score = 0, min_score = 0x7fffffff;
         int max_score_idx = 0, min_score_idx = 0;
         for (int i = 0; i < result_scores.size(); ++i)
