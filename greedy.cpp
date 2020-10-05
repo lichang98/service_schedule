@@ -36,14 +36,14 @@ std::vector<std::vector<int>> group_experts(const std::vector<monte_utils::Exper
 /**
  * Extract result, each array in the result is [task id, expert id , time]
  */
-std::vector<std::vector<int>> extract_result(const std::vector<monte_utils::Task> &tasks)
+std::vector<std::vector<int>> extract_result(const std::vector<monte_utils::Task> &tasks, const std::vector<monte_utils::Expert> &experts)
 {
     std::vector<std::vector<int>> result;
     for (int i = 0; i < tasks.size(); ++i)
     {
         for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
         {
-            result.emplace_back(std::vector<int>({tasks[i].task_id, tasks[i].each_stay_expert_id[j], tasks[i].assign_tm[j]}));
+            result.emplace_back(std::vector<int>({tasks[i].task_id, experts[tasks[i].each_stay_expert_id[j]].expert_id, tasks[i].assign_tm[j]}));
         }
     }
     std::sort(result.begin(), result.end(), [](const std::vector<int> &a, const std::vector<int> &b) -> bool {
@@ -107,6 +107,32 @@ void swap_tasks(monte_utils::Task &task_a, monte_utils::Task &task_b,
 }
 
 /**
+ * check if two task swap is valid
+ */
+bool swap_check(monte_utils::Task &task_i, monte_utils::Task &task_j, monte_utils::Expert &expert_i, monte_utils::Expert &expert_j)
+{
+    bool flag = (expert_i.process_type_duras[task_i.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_i.process_type_duras[task_j.type] < monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_j.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_i.type] < monte_utils::EXPERT_NOT_GOOD_TIME \
+                && task_i.curr_migrate_count < monte_utils::TASK_MAX_MIGRATION \
+                && task_j.curr_migrate_count < monte_utils::TASK_MAX_MIGRATION) ||
+                (expert_i.process_type_duras[task_i.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_i.process_type_duras[task_j.type] < monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_j.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_i.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && task_i.curr_migrate_count + 1 < monte_utils::TASK_MAX_MIGRATION \
+                && task_j.curr_migrate_count < monte_utils::TASK_MAX_MIGRATION) ||
+                (expert_i.process_type_duras[task_i.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_i.process_type_duras[task_j.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_j.type] == monte_utils::EXPERT_NOT_GOOD_TIME \
+                && expert_j.process_type_duras[task_i.type] < monte_utils::EXPERT_NOT_GOOD_TIME \
+                && task_i.curr_migrate_count < monte_utils::TASK_MAX_MIGRATION \
+                && task_j.curr_migrate_count + 1 < monte_utils::TASK_MAX_MIGRATION);
+    return flag;
+}
+
+/**
  * The algorithm will run based on a policy
  * tasks will try to assign to suitable expert if available, if not assign to not suitable experts to reduce timeout
  * during the algorithm iteration, firstly check if have tasks finish, then check if tasks generated need to assign
@@ -121,6 +147,7 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
     std::vector<bool> flags_finish(tasks.size(), false);
     while (num_finish < tasks.size())
     {
+        std::vector<bool> flags_vis(tasks.size(), false);
         if (env_tm % 1000 == 0)
             std::cout << "env_tm=" << env_tm << ", num_finish=" << num_finish << std::endl;
         // check if tasks finish
@@ -129,7 +156,7 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             if (flags_finish[i] || tasks[i].curr_migrate_count == 0)
                 continue;
             int process_dura = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-            if (tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_dura == env_tm)
+            if (tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_dura + 1 == env_tm)
             {
                 flags_finish[i] = true;
                 num_finish++;
@@ -137,10 +164,10 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                 // release expert resource
                 int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
                 release_task(experts[expt_idx], i);
+                flags_vis[i]=true;
             }
         }
 
-        std::vector<bool> flags_vis(tasks.size(), false);
         // check if have generated tasks
         for (int i = 0; i < tasks.size(); ++i)
         {
@@ -155,6 +182,7 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                     flag_suc = true;
                     assign_task(tasks[i], experts[expt_idx], i, expt_idx, env_tm);
                     flags_vis[i] = true;
+                    break;
                 }
             }
             if (!flag_suc)
@@ -205,25 +233,19 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                 continue;
             for (int j = i + 1; j < tasks.size(); ++j)
             {
-                if (tasks[j].curr_migrate_count == 0 || flags_vis[j])
+                if (tasks[j].curr_migrate_count == 0 || flags_vis[j] ||  tasks[j].curr_migrate_count == monte_utils::TASK_MAX_MIGRATION)
                     continue;
                 int expt_idx_j = tasks[j].each_stay_expert_id[tasks[j].curr_migrate_count - 1];
                 if (experts[expt_idx_j].process_type_duras[tasks[j].type] < monte_utils::EXPERT_NOT_GOOD_TIME)
                     continue;
                 // try swap
-                if ((experts[expt_idx_i].process_type_duras[tasks[j].type] < monte_utils::EXPERT_NOT_GOOD_TIME &&
-                     experts[expt_idx_j].process_type_duras[tasks[i].type] < monte_utils::EXPERT_NOT_GOOD_TIME) ||
-                    (experts[expt_idx_i].process_type_duras[tasks[j].type] < monte_utils::EXPERT_NOT_GOOD_TIME &&
-                     tasks[i].curr_migrate_count + 1 < monte_utils::TASK_MAX_MIGRATION &&
-                     experts[expt_idx_j].process_type_duras[tasks[i].type] == monte_utils::EXPERT_NOT_GOOD_TIME) ||
-                    (experts[expt_idx_j].process_type_duras[tasks[i].type] < monte_utils::EXPERT_NOT_GOOD_TIME &&
-                     tasks[j].curr_migrate_count + 1 < monte_utils::TASK_MAX_MIGRATION &&
-                     experts[expt_idx_i].process_type_duras[tasks[j].type] < monte_utils::EXPERT_NOT_GOOD_TIME))
+                if (swap_check(tasks[i],tasks[j],experts[expt_idx_i],experts[expt_idx_j]))
                 {
                     // both swap to suitable expert
                     swap_tasks(tasks[i], tasks[j], experts[expt_idx_i], experts[expt_idx_j], i, j, expt_idx_i, expt_idx_j, env_tm);
                     flags_vis[i] = true;
                     flags_vis[j] = true;
+                    break;
                 }
             }
         }
@@ -237,7 +259,7 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
         }
     }
 
-    std::vector<std::vector<int>> result = extract_result(tasks);
+    std::vector<std::vector<int>> result = extract_result(tasks,experts);
     double score = monte_metrics::score(tasks, experts);
     return std::make_tuple(result, score);
 }
