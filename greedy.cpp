@@ -6,6 +6,7 @@
 #include "utils.hpp"
 #include <ctime>
 #include <tuple>
+#include <algorithm>
 
 /**
  * Group experts by good at processing types, one expert may belong to multiple group
@@ -141,7 +142,7 @@ bool swap_check(monte_utils::Task &task_i, monte_utils::Task &task_j, monte_util
  * @return return the convert result format
  */
 std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_utils::Task> tasks, std::vector<monte_utils::Expert> experts,
-                                                          const std::vector<std::vector<int>> &expt_groups)
+                                                          std::vector<std::vector<int>> &expt_groups)
 {
     int env_tm = 0, num_finish = 0;
     std::vector<bool> flags_finish(tasks.size(), false);
@@ -156,7 +157,7 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             if (flags_finish[i] || tasks[i].curr_migrate_count == 0)
                 continue;
             int process_dura = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-            if (tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_dura + 1 == env_tm)
+            if (tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_dura  == env_tm)
             {
                 flags_finish[i] = true;
                 num_finish++;
@@ -169,6 +170,12 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
         }
 
         // check if have generated tasks
+        for(int i=0;i<expt_groups.size();++i)
+        {
+            std::sort(expt_groups[i].begin(),expt_groups[i].end(),[&experts](const int a, const int b)->bool{
+                return experts[a].busy_sum < experts[b].busy_sum;
+            });
+        }
         for (int i = 0; i < tasks.size(); ++i)
         {
             if (tasks[i].generate_tm > env_tm || tasks[i].curr_migrate_count > 0)
