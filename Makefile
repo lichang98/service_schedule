@@ -1,2 +1,2 @@
-b.out: greedy.cpp
-	g++ greedy.cpp -O3 -o b.out
+a.out: greedy.cpp
+	g++ greedy.cpp -O3 -o a.out
