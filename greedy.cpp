@@ -181,10 +181,6 @@ std::tuple<std::vector<std::vector<int>>, double, std::vector<SnapShot>> run_alg
     }
     while (num_finish < tasks.size())
     {
-        if (env_tm % 500 == 0)
-        {
-            std::cout << "env_time=" << env_tm << " num finish=" << num_finish << std::endl;
-        }
         std::vector<bool> flags_vis(tasks.size(), false);
         // check if tasks finish
         for (int i = 0; i < tasks.size(); ++i)
@@ -358,7 +354,7 @@ int main(int argc, char const *argv[])
     }
 
     std::cout << "Generate initial solutions finish, snap_shots size=" << snap_shots.size() << std::endl;
-    const int SNAP_SHOT_MAX_KEEP = 2;
+    const int SNAP_SHOT_MAX_KEEP = 8;
     // iterations
     // after each iteration, new snapshots will be generated, and low score snapshots will be dropped
     std::cout << "Start iterations ..." << std::endl;
@@ -366,7 +362,12 @@ int main(int argc, char const *argv[])
     {
         std::cout << ">>> Iter #" << iter << " best score=" << best_score << std::endl;
         std::sort(snap_shots.begin(), snap_shots.end(), [](const SnapShot &a, const SnapShot &b) -> bool {
-            return a.score < b.score;
+            if(abs(a.score-b.score) > 0.01)
+                return a.score < b.score;
+            else if(a.snap_shot_tm != b.snap_shot_tm)
+                return a.snap_shot_tm > b.snap_shot_tm;
+            else
+                return a.score < b.score;
         });
         if (snap_shots.size() > SNAP_SHOT_MAX_KEEP)
         {
@@ -401,31 +402,8 @@ int main(int argc, char const *argv[])
         save_result(snap_solutions[best_idx]);
         for (int i = 0; i < shot_size; ++i)
             snap_shots.insert(snap_shots.end(), tmp_snps[i].begin(), tmp_snps[i].end());
+        if (iter % 100 == 0)
+            EPSILON *= 0.8;
     }
-
-    // for(int iter=1;iter < 2000;++iter)
-    // {
-    //     srand(time(nullptr));
-    //     if(iter % 100 == 0)
-    //         EPSILON *= 0.9;
-    //     std::cout << ">>> Iter #" << iter << " ..." << std::endl;
-    //     std::vector<monte_utils::Task> tasks = monte_utils::load_tasks();
-    //     std::sort(tasks.begin(), tasks.end(), [](const monte_utils::Task &a, const monte_utils::Task &b) -> bool {
-    //         if (a.generate_tm != b.generate_tm)
-    //             return a.generate_tm < b.generate_tm;
-    //         else
-    //             return a.task_id < b.task_id;
-    //     });
-    //     std::vector<monte_utils::Expert> experts = monte_utils::load_experts();
-    //     std::vector<std::vector<int>> expt_groups = group_experts(experts, monte_utils::NUM_TASK_TYPE);
-    //     // std::tuple<std::vector<std::vector<int>>, double> ret = run_alg(tasks, experts, expt_groups);
-    //     std::tuple<std::vector<std::vector<int>>, double, std::vector<SnapShot>> ret=run_alg(tasks,experts,expt_groups,)
-    //     std::cout << "score=" << std::get<1>(ret) << ", best score=" << best_score <<std::endl;
-    //     if(std::get<1>(ret) > best_score)
-    //     {
-    //         best_score = std::get<1>(ret);
-    //         save_result(std::get<0>(ret));
-    //     }
-    // }
     return 0;
 }

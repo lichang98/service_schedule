@@ -25,7 +25,7 @@ namespace metrics
         int total_stay = 0, size = task.each_stay_dura.size();
         for (int i = 0; i < size; ++i)
             total_stay += task.each_stay_dura[i];
-        return total_stay * 1.0 / task.each_stay_dura[size - 1];
+        return task.each_stay_dura[size - 1] * 1.0 / total_stay;
     }
 
     double score(std::vector<double> expert_workloads, std::vector<double> task_resp_tmout, std::vector<double> exec_effs)
