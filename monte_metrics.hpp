@@ -24,11 +24,8 @@ double task_exec_eff(monte_utils::Task &task)
 {
     if (task.curr_migrate_count == 0)
         return 0;
-    int total_stay = 0;
-    for (int i = 0; i < task.curr_migrate_count - 1; ++i)
-        total_stay += task.assign_tm[i + 1] - task.assign_tm[i];
-    total_stay += task.finish_tm - task.assign_tm[task.curr_migrate_count - 1];
-    return (task.finish_tm - task.assign_tm[task.curr_migrate_count - 1]) / total_stay * 1.0;
+    int last_stay = task.finish_tm - task.assign_tm[task.curr_migrate_count - 1];
+    return last_stay * 1.0 / (task.finish_tm - task.generate_tm);
 }
 
 double score(std::vector<monte_utils::Task> &tasks, std::vector<monte_utils::Expert> &experts)

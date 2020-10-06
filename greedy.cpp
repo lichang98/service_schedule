@@ -8,7 +8,27 @@
 #include <ctime>
 #include <tuple>
 
-static double EPSILON = 0.5;
+struct SnapShot
+{
+    std::vector<monte_utils::Task> tasks;
+    std::vector<monte_utils::Expert> experts;
+    std::vector<bool> finish_flags;
+    int env_tm;
+    int shot_step;
+    int num_finish;
+
+    SnapShot() : env_tm(0), num_finish(0), shot_step(0) {}
+    SnapShot(std::vector<monte_utils::Task> _tasks, std::vector<monte_utils::Expert> _experts, std::vector<bool> _finish_flags,
+             int _env_tm, int _shot_step, int _num_finish)
+    {
+        this->tasks = _tasks;
+        this->experts = _experts;
+        this->finish_flags = _finish_flags;
+        this->env_tm = _env_tm;
+        this->shot_step = _shot_step;
+        this->num_finish = _num_finish;
+    }
+};
 
 /**
  * Group experts by good at processing types, one expert may belong to multiple group
@@ -129,16 +149,33 @@ bool swap_check(monte_utils::Task &task_i, monte_utils::Task &task_j, monte_util
  * @return return the convert result format
  */
 std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_utils::Task> tasks, std::vector<monte_utils::Expert> experts,
-                                                          std::vector<std::vector<int>> &expt_groups)
+                                                          std::vector<std::vector<int>> &expt_groups, bool use_snap_shot = false,
+                                                          SnapShot shot = SnapShot())
 {
     int env_tm = 0, num_finish = 0;
     std::vector<bool> flags_finish(tasks.size(), false);
+    if (use_snap_shot)
+    {
+        env_tm = shot.env_tm;
+        flags_finish = shot.finish_flags;
+        num_finish = shot.num_finish;
+    }
     while (num_finish < tasks.size())
     {
         std::vector<bool> flags_vis(tasks.size(), false);
         if (env_tm % 1000 == 0)
             std::cout << "env_tm=" << env_tm << ", num_finish=" << num_finish << std::endl;
-        // check if tasks finish
+        if (use_snap_shot)
+        {
+            use_snap_shot = false;
+            if (shot.shot_step == 1)
+                goto snapshot_step1;
+            else if (shot.shot_step == 2)
+                goto snapshot_step2;
+            else
+                goto snapshot_step3;
+        }
+        // stetp1: check if tasks finish
         for (int i = 0; i < tasks.size(); ++i)
         {
             if (flags_finish[i] || tasks[i].curr_migrate_count == 0)
@@ -156,7 +193,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             }
         }
 
-        // check if have generated tasks
+    snapshot_step1:
+        // step2: check if have generated tasks
         for (int i = 0; i < expt_groups.size(); ++i)
         {
             std::sort(expt_groups[i].begin(), expt_groups[i].end(), [&experts](const int a, const int b) -> bool {
@@ -186,7 +224,6 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             }
             if (!flag_suc)
             {
-                flag_suc = ((double)rand() / RAND_MAX < EPSILON);
                 // can only assign to not suitable expert
                 for (int j = 0; j < experts.size() && !flag_suc; ++j)
                 {
@@ -200,7 +237,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             }
             // if still not assigned, just wait
         }
-        // migrate or swap tasks, the operations only been applied to tasks on not suitable experts
+    snapshot_step2:
+        // step3: migrate or swap tasks, the operations only been applied to tasks on not suitable experts
         // and must keep sure task finally exected on suitable expert
         // firstly check if suitable experts available, then check if swap can be taken to make
         // some tasks been executed on suitable experts
@@ -223,7 +261,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                 }
             }
         }
-        // try swap tasks
+    snapshot_step3:
+        // step4: try swap tasks
         for (int i = 0; i < tasks.size() - 1; ++i)
         {
             if (tasks[i].curr_migrate_count == 0 || flags_vis[i] || tasks[i].curr_migrate_count == monte_utils::TASK_MAX_MIGRATION)
