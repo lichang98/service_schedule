@@ -40,6 +40,7 @@ double score(std::vector<monte_utils::Task> &tasks, std::vector<monte_utils::Exp
     double workload_std = 0, avg_workload = 0;
     for (int i = 0; i < experts.size(); ++i)
         avg_workload += expert_workload(experts[i]);
+    avg_workload /= experts.size();
     for (int i = 0; i < experts.size(); ++i)
     {
         double val = expert_workload(experts[i]);

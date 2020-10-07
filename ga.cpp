@@ -10,17 +10,30 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <omp.h>
 #include <set>
 #include <tuple>
-#include <unistd.h>
 
 #define RANDOM(low, high) ((int)(rand() % (high - low + 1) + low))
 
-static const int NUM_INIT_SOLUTIONS = 100; // the initial generated ga solutions
+static const int NUM_INIT_SOLUTIONS = 128; // the initial generated ga solutions
 static const int NUM_MUTATIONS = 10;
 static const double MUTATION_RATIO = 0.1; // the ratio of the tasks that actions will be changed
 static const int NUM_ITERS = 1000;
 static const int MAX_TIME_LONG = 1000000;
+
+/**
+ * save result into csv file
+ */
+void save_result(std::vector<std::vector<int>> &result)
+{
+    time_t date = time(nullptr);
+    tm *date_tm = localtime(&date);
+    char result_tm_stamp[50];
+    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000,
+            date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
+    utils::save_result(strcat(utils::PRED_RESULT_PREFIX, result_tm_stamp), result);
+}
 
 /**
  * Group experts by good at processing types, one expert may belong to multiple group
@@ -187,11 +200,8 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
     std::vector<std::vector<int>> expert_marker(experts.size());
     for (int i = 0; i < experts.size(); ++i)
         expert_marker[i] = std::vector<int>(MAX_TIME_LONG, monte_utils::EXPERT_MAX_PARALLEL);
-    // std::cout << "\t\tOne simultation start ..." << std::endl;
     for (int i = 0; i < tasks.size(); ++i)
     {
-        // if (i % 500 == 0)
-        //     std::cout << "\t\t\t Solved " << i << std::endl;
         int start_pos = i * monte_utils::TASK_MAX_MIGRATION, base = i * monte_utils::TASK_MAX_MIGRATION;
         while (s[start_pos] == -1)
             start_pos++;
@@ -212,11 +222,11 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
         while (!flag)
         {
             flag = true;
-            std::vector<int> start_times(tasks[i].curr_migrate_count + 1, 0);
-            for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+            std::vector<int> start_times(migrate_count + 1, 0);
+            for (int j = 0; j < migrate_count; ++j)
                 start_times[j] = tasks[i].assign_tm[j];
-            start_times[tasks[i].curr_migrate_count] = start_times[tasks[i].curr_migrate_count - 1] + process_times[migrate_count - 1];
-            for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+            start_times[migrate_count] = start_times[migrate_count - 1] + process_times[migrate_count - 1];
+            for (int j = 0; j < migrate_count; ++j)
             {
                 if (!check_interval(expert_marker[tasks[i].each_stay_expert_id[j]], start_times[j], start_times[j + 1]))
                 {
@@ -245,7 +255,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                     std::fill(tasks[i].assign_tm + j + 1, tasks[i].assign_tm + migrate_count, -1);
                     tasks[i].curr_migrate_count = j + 1;
                 }
-                for (int k = start_times[j]; k < start_times[j + 1]; ++k)
+                for (int k = start_times[j]; k < start_times[j] + process_times[j]; ++k)
                     expert_marker[tasks[i].each_stay_expert_id[j]][k] -= 1;
                 break;
             }
@@ -284,10 +294,12 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
     {
         std::vector<std::tuple<std::vector<std::vector<int>>, double>> result_scores;
         std::cout << "Iter #" << iter << ": start simulations for solutions..." << std::endl;
+        result_scores.resize(solutions.size());
+#pragma omp parallel for
         for (int i = 0; i < solutions.size(); ++i)
-            result_scores.emplace_back(convert_solution_to_result(solutions[i], tasks, experts));
+            result_scores[i] = convert_solution_to_result(solutions[i], tasks, experts);
         std::cout << "\tsolutions simulate finish.." << std::endl;
-        double max_score = 0, min_score = 0x7fffffff;
+        double max_score = 0, min_score = 1e8;
         int max_score_idx = 0, min_score_idx = 0;
         for (int i = 0; i < result_scores.size(); ++i)
         {
@@ -303,6 +315,7 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
             }
         }
         best_result = std::get<0>(result_scores[max_score_idx]);
+        save_result(best_result);
         int s2 = RANDOM(0, result_scores.size() - 1);
         while (s2 == max_score_idx || s2 == min_score_idx)
             s2 = RANDOM(0, result_scores.size() - 1);
@@ -318,22 +331,9 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
             mutation(solutions[idx], tasks, expt_groups);
         }
         solutions.erase(solutions.begin() + min_score_idx);
-        std::cout << "\tbest score=" << max_score << std::endl;
+        std::cout << "\tbest score=" << max_score << ", min score=" << min_score << std::endl;
     }
     return best_result;
-}
-
-/**
- * save result into csv file
- */
-void save_result(std::vector<std::vector<int>> &result)
-{
-    time_t date = time(nullptr);
-    tm *date_tm = localtime(&date);
-    char result_tm_stamp[50];
-    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000,
-            date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
-    utils::save_result(strcat(utils::PRED_RESULT_PREFIX, result_tm_stamp), result);
 }
 
 int main(int argc, char const *argv[])
@@ -343,6 +343,5 @@ int main(int argc, char const *argv[])
     std::vector<monte_utils::Expert> experts = monte_utils::load_experts();
     std::vector<std::vector<int>> expt_groups = group_experts(experts, monte_utils::NUM_TASK_TYPE);
     std::vector<std::vector<int>> result = ga_run(tasks, experts, expt_groups);
-    save_result(result);
     return 0;
 }
