@@ -4,18 +4,21 @@
 #include "monte_metrics.hpp"
 #include "monte_utils.hpp"
 #include "utils.hpp"
+#include <omp.h>
 #include <tuple>
+
+static double EPSILON = 0.9;
 
 /**
  * save result into csv file
  */
-void save_result(std::vector<std::vector<int>> &result)
+void save_result(std::vector<std::vector<int>> &result, double score)
 {
     time_t date = time(nullptr);
     tm *date_tm = localtime(&date);
     char result_tm_stamp[50];
-    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000,
-            date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
+    sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d_score_%lf.csv", date_tm->tm_year + 1900 - 2000,
+            date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec, score);
     char prefix[100] = "\0";
     strncpy(prefix, utils::PRED_RESULT_PREFIX, sizeof(utils::PRED_RESULT_PREFIX));
     utils::save_result(strcat(prefix, result_tm_stamp), result);
@@ -156,8 +159,6 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
     int num_finish = 0, env_tm = 0;
     while (num_finish < tasks.size())
     {
-        if (env_tm % 100 == 0)
-            std::cout << "time=" << env_tm << ", num finish=" << num_finish << std::endl;
         std::vector<bool> vis(tasks.size(), false);
         // check finish
         for (int i = 0; i < tasks.size(); ++i)
@@ -184,7 +185,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             int task_type = tasks[i].type;
             for (int &expt_idx : expt_groups[task_type])
             {
-                if (experts[expt_idx].num_idle_channel > 0)
+                double rand_val = (double)rand() / RAND_MAX;
+                if (experts[expt_idx].num_idle_channel > 0 && rand_val < EPSILON)
                 {
                     assign_task(tasks[i], experts[expt_idx], i, expt_idx, env_tm);
                     std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
@@ -211,7 +213,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                 break;
             for (int j = experts.size() - 1; j >= 0; --j)
             {
-                if (experts[j].num_idle_channel > 0)
+                double rand_val = (double)rand() / RAND_MAX;
+                if (experts[j].num_idle_channel > 0 && rand_val < RAND_MAX)
                 {
                     assign_task(tasks[i], experts[j], i, j, env_tm);
                     vis[i] = true;
@@ -233,7 +236,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
             int task_type = tasks[i].type;
             for (int &expt_idx : expt_groups[task_type])
             {
-                if (experts[expt_idx].num_idle_channel > 0)
+                double rand_val = (double)rand() / RAND_MAX;
+                if (experts[expt_idx].num_idle_channel > 0 && rand_val < EPSILON)
                 {
                     assign_task(tasks[i], experts[expt_idx], i, expt_idx, env_tm);
                     std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
@@ -264,7 +268,8 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
                     tasks[j].curr_migrate_count == monte_utils::TASK_MAX_MIGRATION)
                     continue;
                 int expt_j_idx = tasks[j].each_stay_expert_id[tasks[j].curr_migrate_count - 1];
-                if (swap_check(tasks[i], tasks[j], experts[expt_i_idx], experts[expt_j_idx]))
+                double rand_val = (double)rand() / RAND_MAX;
+                if (swap_check(tasks[i], tasks[j], experts[expt_i_idx], experts[expt_j_idx]) && rand_val < EPSILON)
                 {
                     swap_tasks(tasks[i], tasks[j], experts[expt_i_idx], experts[expt_j_idx], i, j, expt_i_idx, expt_j_idx, env_tm);
                     vis[i] = true;
@@ -289,19 +294,39 @@ std::tuple<std::vector<std::vector<int>>, double> run_alg(std::vector<monte_util
 
 int main(int argc, char const *argv[])
 {
-    std::vector<monte_utils::Task> tasks = monte_utils::load_tasks();
-    std::vector<monte_utils::Expert> experts = monte_utils::load_experts();
-    std::vector<std::vector<int>> expt_grps = group_experts(experts, monte_utils::NUM_TASK_TYPE);
-    std::sort(tasks.begin(), tasks.end(), [](const monte_utils::Task &a, const monte_utils::Task &b) -> bool {
-        if (a.generate_tm != b.generate_tm)
-            return a.generate_tm < b.generate_tm;
-        else if (a.max_resp != b.max_resp)
-            return a.max_resp < b.max_resp;
-        else
-            return a.task_id < b.task_id;
-    });
-    std::tuple<std::vector<std::vector<int>>, double> ret = run_alg(tasks, experts, expt_grps);
-    std::cout << "Score=" << std::get<1>(ret) << std::endl;
-    save_result(std::get<0>(ret));
+    srand(time(nullptr));
+    for (int iter = 1; iter <= 1000; ++iter)
+    {
+        printf("Iter #%05d ...\n", iter);
+        std::vector<monte_utils::Task> init_tasks = monte_utils::load_tasks();
+        std::vector<monte_utils::Expert> init_experts = monte_utils::load_experts();
+        std::vector<std::vector<monte_utils::Task>> thread_tasks(8);
+        std::vector<std::vector<monte_utils::Expert>> thread_experts(8);
+        for (int i = 0; i < 8; ++i)
+        {
+            thread_tasks[i] = init_tasks;
+            thread_experts[i] = init_experts;
+        }
+#pragma omp parallel for
+        for (int pa = 1; pa <= 8; ++pa)
+        {
+            std::vector<monte_utils::Task> tasks = thread_tasks[pa - 1];
+            std::vector<monte_utils::Expert> experts = thread_experts[pa - 1];
+            std::vector<std::vector<int>> expt_grps = group_experts(experts, monte_utils::NUM_TASK_TYPE);
+            std::sort(tasks.begin(), tasks.end(), [](const monte_utils::Task &a, const monte_utils::Task &b) -> bool {
+                if (a.generate_tm != b.generate_tm)
+                    return a.generate_tm < b.generate_tm;
+                else if (a.max_resp != b.max_resp)
+                    return a.max_resp < b.max_resp;
+                else
+                    return a.task_id < b.task_id;
+            });
+            std::tuple<std::vector<std::vector<int>>, double> ret = run_alg(tasks, experts, expt_grps);
+            save_result(std::get<0>(ret), std::get<1>(ret));
+        }
+
+        if (iter % 100 == 0)
+            iter *= 0.9;
+    }
     return 0;
 }
