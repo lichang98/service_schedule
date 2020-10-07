@@ -1,2 +1,2 @@
-a.out: greedy2.cpp
-	g++ greedy2.cpp -O3 -fopenmp -o a.out
+a.out: ga.cpp
+	g++ ga.cpp -O3 -o a.out

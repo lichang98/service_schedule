@@ -7,6 +7,7 @@
 #include "monte_metrics.hpp"
 #include "monte_utils.hpp"
 #include "utils.hpp"
+#include <algorithm>
 #include <cstring>
 #include <ctime>
 #include <set>
@@ -19,11 +20,12 @@ static const int NUM_INIT_SOLUTIONS = 100; // the initial generated ga solutions
 static const int NUM_MUTATIONS = 10;
 static const double MUTATION_RATIO = 0.1; // the ratio of the tasks that actions will be changed
 static const int NUM_ITERS = 1000;
+static const int MAX_TIME_LONG = 1000000;
 
 /**
  * Group experts by good at processing types, one expert may belong to multiple group
  */
-std::vector<std::vector<int>> group_experts(std::vector<monte_utils::Expert> &experts, int num_types)
+std::vector<std::vector<int>> group_experts(const std::vector<monte_utils::Expert> &experts, const int num_types)
 {
     std::vector<std::vector<int>> expt_groups(num_types);
     for (int i = 0; i < experts.size(); ++i)
@@ -33,6 +35,15 @@ std::vector<std::vector<int>> group_experts(std::vector<monte_utils::Expert> &ex
             if (experts[i].process_type_duras[j] < monte_utils::EXPERT_NOT_GOOD_TIME)
                 expt_groups[j].push_back(i);
         }
+    }
+    for (int i = 0; i < expt_groups.size(); ++i)
+    {
+        std::sort(expt_groups[i].begin(), expt_groups[i].end(), [&experts, i](const int a, const int b) -> bool {
+            if (experts[a].process_type_duras[i] != experts[b].process_type_duras[i])
+                return experts[a].process_type_duras[i] < experts[b].process_type_duras[i];
+            else
+                return experts[a].expert_id < experts[b].expert_id;
+        });
     }
     return expt_groups;
 }
@@ -151,43 +162,16 @@ std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tas
 }
 
 /**
- * Detect dependency cycle
- * link matrix representation of graph
- * pos (i,j) value k means there are k tasks try to migrate from expert i to expert j
+ * check interval of vector all positive
  */
-bool detect_dep_cycle(std::vector<std::vector<int>> &link_mat)
+bool check_interval(std::vector<int> &vec, int low, int high)
 {
-    int row = link_mat.size(), col = link_mat[0].size();
-    bool flag = true;
-    while (flag)
+    for (int i = low; i < high; ++i)
     {
-        flag = false;
-        for (int i = 0; i < row; ++i)
-        {
-            bool zero_out = true;
-            for (int j = 0; j < col && zero_out; ++j)
-            {
-                if (link_mat[i][j] > 0)
-                    zero_out = false;
-            }
-            if (zero_out)
-            {
-                flag = true;
-                // remove coresponding column
-                for (int ln = 0; ln < row; ++ln)
-                {
-                    if (link_mat[ln][i] > 0)
-                        link_mat[ln][i]=0;
-                }
-            }
-        }
+        if (vec[i] <= 0)
+            return false;
     }
-    flag = false;
-    for (int i = 0; i < row && !flag; ++i)
-        for (int j = 0; j < col && !flag; ++j)
-            if (link_mat[i][j] > 0)
-                flag = true;
-    return flag;
+    return true;
 }
 
 /**
@@ -200,117 +184,87 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                                                                              std::vector<monte_utils::Task> tasks,
                                                                              std::vector<monte_utils::Expert> experts)
 {
-    int env_tm = 0, num_finish = 0;
-    std::vector<int> start_poses(tasks.size(), 0);
-    std::vector<bool> finish_flag(tasks.size(), false);
+    std::vector<std::vector<int>> expert_marker(experts.size());
+    for (int i = 0; i < experts.size(); ++i)
+        expert_marker[i] = std::vector<int>(MAX_TIME_LONG, monte_utils::EXPERT_MAX_PARALLEL);
+    // std::cout << "\t\tOne simultation start ..." << std::endl;
     for (int i = 0; i < tasks.size(); ++i)
     {
-        int start_pos = 0;
-        while (s[i * monte_utils::TASK_MAX_MIGRATION + start_pos] == -1)
+        // if (i % 500 == 0)
+        //     std::cout << "\t\t\t Solved " << i << std::endl;
+        int start_pos = i * monte_utils::TASK_MAX_MIGRATION, base = i * monte_utils::TASK_MAX_MIGRATION;
+        while (s[start_pos] == -1)
             start_pos++;
-        start_poses[i] = start_pos;
+        tasks[i].curr_migrate_count = monte_utils::TASK_MAX_MIGRATION - (start_pos - base); // the total migration count
+        for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+        {
+            tasks[i].each_stay_expert_id[j] = s[start_pos + j];
+            tasks[i].assign_tm[j] = tasks[i].generate_tm + j;
+        }
+        // int final_process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
+        std::vector<int> process_times(tasks[i].curr_migrate_count);
+        int task_type = tasks[i].type;
+        for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+            process_times[j] = experts[tasks[i].each_stay_expert_id[j]].process_type_duras[task_type];
+        int migrate_count = tasks[i].curr_migrate_count;
+        // check valid intervals
+        bool flag = false;
+        while (!flag)
+        {
+            flag = true;
+            std::vector<int> start_times(tasks[i].curr_migrate_count + 1, 0);
+            for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+                start_times[j] = tasks[i].assign_tm[j];
+            start_times[tasks[i].curr_migrate_count] = start_times[tasks[i].curr_migrate_count - 1] + process_times[migrate_count - 1];
+            for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
+            {
+                if (!check_interval(expert_marker[tasks[i].each_stay_expert_id[j]], start_times[j], start_times[j + 1]))
+                {
+                    flag = false;
+                    tasks[i].assign_tm[j]++;
+                    for (int k = j + 1; k < tasks[i].curr_migrate_count; ++k)
+                        tasks[i].assign_tm[k] = std::max(tasks[i].assign_tm[k - 1] + 1, tasks[i].assign_tm[k]);
+                    break;
+                }
+            }
+        }
+        // fill time intervales
+        // the tasks may finish at intermediate expert, need to check
+        std::vector<int> start_times(migrate_count + 1, 0);
+        for (int j = 0; j < migrate_count; ++j)
+            start_times[j] = tasks[i].assign_tm[j];
+        start_times[migrate_count] = start_times[migrate_count - 1] + process_times[migrate_count - 1];
+        for (int j = 0; j < migrate_count; ++j)
+        {
+            if (start_times[j + 1] - start_times[j] >= process_times[j])
+            {
+                // task finish on the expert
+                if (j != migrate_count - 1)
+                {
+                    std::fill(tasks[i].each_stay_expert_id + j + 1, tasks[i].each_stay_expert_id + migrate_count, -1);
+                    std::fill(tasks[i].assign_tm + j + 1, tasks[i].assign_tm + migrate_count, -1);
+                    tasks[i].curr_migrate_count = j + 1;
+                }
+                for (int k = start_times[j]; k < start_times[j + 1]; ++k)
+                    expert_marker[tasks[i].each_stay_expert_id[j]][k] -= 1;
+                break;
+            }
+            else
+            {
+                for (int k = start_times[j]; k < start_times[j + 1]; ++k)
+                    expert_marker[tasks[i].each_stay_expert_id[j]][k] -= 1;
+            }
+        }
     }
-    while (num_finish < tasks.size())
+    // update experts
+    for (int i = 0; i < experts.size(); ++i)
     {
-
-        // detect deps cycle , test
-        std::vector<std::vector<int>> link_mat(experts.size(), std::vector<int>(experts.size(), 0));
-        for (int i = 0; i < tasks.size(); ++i)
+        for (int j = 0; j < MAX_TIME_LONG; ++j)
         {
-            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION || tasks[i].curr_migrate_count == 0)
-                continue;
-            int prev_expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1],
-                next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
-            link_mat[prev_expt_idx][next_expt_idx]++;
-        }
-        std::cout << "start detection.." << std::endl;
-        if (detect_dep_cycle(link_mat))
-        {
-            std::cout << "detected cycles.....!!!!" << std::endl;
-            sleep(1);
-        }
-        else
-        {
-            std::cout << "no cycle" << std::endl;
-        }
-        
-
-        // firstly check if tasks have finished on current expert
-        for (int i = 0; i < tasks.size(); ++i)
-        {
-            if (tasks[i].curr_migrate_count == 0)
-                continue;
-            int process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
-            if (env_tm == tasks[i].assign_tm[tasks[i].curr_migrate_count - 1] + process_tm + 1)
-            {
-                tasks[i].finish_tm = env_tm;
-                finish_flag[i] = true;
-                num_finish++;
-                // release channel of expert
-                int expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
-                for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
-                {
-                    if (experts[expt_idx].channels[j] == i)
-                    {
-                        experts[expt_idx].channels[j] = -1;
-                        experts[expt_idx].num_idle_channel++;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // check migration
-        for (int i = 0; i < tasks.size(); ++i)
-        {
-            if (finish_flag[i] || start_poses[i] == monte_utils::TASK_MAX_MIGRATION || tasks[i].generate_tm > env_tm)
-                continue;
-            int next_expt_idx = s[i * monte_utils::TASK_MAX_MIGRATION + start_poses[i]];
-            if (experts[next_expt_idx].num_idle_channel > 0)
-            {
-                // release from previous expert
-                if (tasks[i].curr_migrate_count > 0)
-                {
-                    int prev_expt_idx = tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1];
-                    for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
-                    {
-                        if (experts[prev_expt_idx].channels[j] == i)
-                        {
-                            experts[prev_expt_idx].channels[j] = -1;
-                            experts[prev_expt_idx].num_idle_channel++;
-                            break;
-                        }
-                    }
-                }
-                // assign to expert
-                if (tasks[i].curr_migrate_count == 0)
-                    tasks[i].start_process_tm = env_tm;
-                tasks[i].assign_tm[tasks[i].curr_migrate_count] = env_tm;
-                tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count] = next_expt_idx;
-                tasks[i].curr_migrate_count++;
-                start_poses[i]++;
-                for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
-                {
-                    if (experts[next_expt_idx].channels[j] == -1)
-                    {
-                        experts[next_expt_idx].channels[j] = i;
-                        experts[next_expt_idx].num_idle_channel--;
-                        break;
-                    }
-                }
-            }
-        }
-
-        for (int i = 0; i < experts.size(); ++i)
-        {
-            if (experts[i].num_idle_channel < monte_utils::EXPERT_MAX_PARALLEL)
+            if (expert_marker[i][j] < monte_utils::EXPERT_MAX_PARALLEL)
                 experts[i].busy_sum++;
         }
-        env_tm++;
-        if (env_tm % 10 == 0)
-            std::cout << "\t\ttime=" << env_tm << ", num finish=" << num_finish << std::endl;
     }
-    std::cout << std::endl;
     std::vector<std::vector<int>> result = extract_result(tasks);
     double score = monte_metrics::score(tasks, experts);
     return std::make_tuple(result, score);
