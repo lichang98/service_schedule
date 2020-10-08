@@ -161,14 +161,14 @@ void mutation(std::vector<int> &s, std::vector<monte_utils::Task> &tasks, std::v
 /**
  * Extract result, each array in the result is [task id, expert id , time]
  */
-std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tasks)
+std::vector<std::vector<int>> extract_result(std::vector<monte_utils::Task> &tasks, std::vector<monte_utils::Expert> &experts)
 {
     std::vector<std::vector<int>> result;
     for (int i = 0; i < tasks.size(); ++i)
     {
         for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
         {
-            result.emplace_back(std::vector<int>({tasks[i].task_id, tasks[i].each_stay_expert_id[j], tasks[i].assign_tm[j]}));
+            result.emplace_back(std::vector<int>({tasks[i].task_id, experts[tasks[i].each_stay_expert_id[j]].expert_id, tasks[i].assign_tm[j]}));
         }
     }
     return result;
@@ -211,7 +211,6 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
             tasks[i].each_stay_expert_id[j] = s[start_pos + j];
             tasks[i].assign_tm[j] = tasks[i].generate_tm + j;
         }
-        // int final_process_tm = experts[tasks[i].each_stay_expert_id[tasks[i].curr_migrate_count - 1]].process_type_duras[tasks[i].type];
         std::vector<int> process_times(tasks[i].curr_migrate_count);
         int task_type = tasks[i].type;
         for (int j = 0; j < tasks[i].curr_migrate_count; ++j)
@@ -244,17 +243,16 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
         for (int j = 0; j < migrate_count; ++j)
             start_times[j] = tasks[i].assign_tm[j];
         start_times[migrate_count] = start_times[migrate_count - 1] + process_times[migrate_count - 1];
+        tasks[i].start_process_tm = start_times[0];
+        tasks[i].finish_tm = start_times[migrate_count];
         for (int j = 0; j < migrate_count; ++j)
         {
-            if (start_times[j + 1] - start_times[j] >= process_times[j])
+            if (j < migrate_count - 1 && start_times[j + 1] - start_times[j] >= process_times[j])
             {
                 // task finish on the expert
-                if (j != migrate_count - 1)
-                {
-                    std::fill(tasks[i].each_stay_expert_id + j + 1, tasks[i].each_stay_expert_id + migrate_count, -1);
-                    std::fill(tasks[i].assign_tm + j + 1, tasks[i].assign_tm + migrate_count, -1);
-                    tasks[i].curr_migrate_count = j + 1;
-                }
+                std::fill(tasks[i].each_stay_expert_id + j + 1, tasks[i].each_stay_expert_id + migrate_count, -1);
+                std::fill(tasks[i].assign_tm + j + 1, tasks[i].assign_tm + migrate_count, -1);
+                tasks[i].curr_migrate_count = j + 1;
                 for (int k = start_times[j]; k < start_times[j] + process_times[j]; ++k)
                     expert_marker[tasks[i].each_stay_expert_id[j]][k] -= 1;
                 break;
@@ -275,7 +273,7 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
                 experts[i].busy_sum++;
         }
     }
-    std::vector<std::vector<int>> result = extract_result(tasks);
+    std::vector<std::vector<int>> result = extract_result(tasks, experts);
     double score = monte_metrics::score(tasks, experts);
     return std::make_tuple(result, score);
 }

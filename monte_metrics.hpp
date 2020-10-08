@@ -17,7 +17,7 @@ double expert_workload(monte_utils::Expert &expert)
 
 double task_timeout(monte_utils::Task &task)
 {
-    return std::max(task.start_process_tm - task.generate_tm - task.max_resp, 0);
+    return std::max(task.start_process_tm - task.generate_tm - task.max_resp, 0) * 1.0 / task.max_resp;
 }
 
 double task_exec_eff(monte_utils::Task &task)
@@ -46,8 +46,8 @@ double score(std::vector<monte_utils::Task> &tasks, std::vector<monte_utils::Exp
         double val = expert_workload(experts[i]);
         workload_std += (val - avg_workload) * (val - avg_workload);
     }
-    workload_std = sqrt(workload_std / (experts.size() - 1));
-    return 3000 * avg_exec_eff / (2 * avg_timeout + 3 * workload_std);
+    workload_std = sqrt(workload_std / ((int)experts.size()));
+    return 3000 * avg_exec_eff / (3 * avg_timeout + 2 * workload_std);
 }
 
 } // namespace monte_metrics
