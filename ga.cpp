@@ -17,9 +17,9 @@
 
 #define RANDOM(low, high) ((int)(rand() % (high - low + 1) + low))
 
-static const int NUM_INIT_SOLUTIONS = 127; // the initial generated ga solutions
-static const int NUM_MUTATIONS = 40;
-static const double MUTATION_RATIO = 0.4; // the ratio of the tasks that actions will be changed
+static const int NUM_INIT_SOLUTIONS = 63; // the initial generated ga solutions
+static const int NUM_MUTATIONS = 60;
+static const double MUTATION_RATIO = 0.3; // the ratio of the tasks that actions will be changed
 static const int NUM_ITERS = 1000;
 static const int MAX_TIME_LONG = 1000000;
 
@@ -331,87 +331,31 @@ std::vector<int> benchmark_solution_gen(std::vector<monte_utils::Task> tasks,
     while (num_left > 0)
     {
         std::vector<bool> vis(tasks.size(), false);
-        if (env_tm % 500 == 0)
-            std::cout << "time=" << env_tm << ", num left=" << num_left << std::endl;
         for (int i = 0; i < task_groups.size(); ++i)
         {
-            bool flag = true;
-            while (flag)
+            if (task_grp_progress[i] < task_groups[i].size())
             {
-                flag = false;
-                if (task_grp_progress[i] < task_groups[i].size() && (i == 0 || i == 20 || i == 34))
+                int task_idx = task_groups[i][task_grp_progress[i]];
+                if (tasks[task_idx].generate_tm > env_tm)
+                    continue;
+                int task_type = tasks[task_idx].type;
+                std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
+                    if (experts[a].process_type_duras[task_type] != experts[b].process_type_duras[task_type])
+                        return experts[a].process_type_duras[task_type] < experts[b].process_type_duras[task_type];
+                    else if (experts[a].busy_sum != experts[b].busy_sum)
+                        return experts[a].busy_sum < experts[b].busy_sum;
+                    else if (experts[a].num_idle_channel != experts[b].num_idle_channel)
+                        return experts[a].num_idle_channel > experts[b].num_idle_channel;
+                    else
+                        return experts[a].expert_id < experts[b].expert_id;
+                });
+                for (int expt_idx : expt_groups[task_type])
                 {
-                    int task_idx = task_groups[i][task_grp_progress[i]];
-                    if (tasks[task_idx].generate_tm > env_tm)
-                        continue;
-                    int task_type = tasks[task_idx].type;
-                    std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
-                        if (experts[a].busy_sum != experts[b].busy_sum)
-                            return experts[a].busy_sum < experts[b].busy_sum;
-                        else if (experts[a].process_type_duras[task_type] != experts[b].process_type_duras[task_type])
-                            return experts[a].process_type_duras[task_type] < experts[b].process_type_duras[task_type];
-                        else if (experts[a].num_idle_channel != experts[b].num_idle_channel)
-                            return experts[a].num_idle_channel > experts[b].num_idle_channel;
-                        else
-                            return experts[a].expert_id < experts[b].expert_id;
-                    });
-                    for (int expt_idx : expt_groups[task_type])
+                    if (experts[expt_idx].num_idle_channel > 0)
                     {
-                        if (experts[expt_idx].num_idle_channel > 0)
-                        {
-                            assign_task(tasks[task_idx], experts[expt_idx], task_idx, expt_idx, env_tm);
-                            task_grp_progress[i]++;
-                            flag = true;
-                            break;
-                        }
-                    }
-                    if (!flag)
-                    {
-                        for (int j = expt_groups.size() - 1; j >= 0; --j)
-                        {
-                            if (flag)
-                                break;
-                            for (int k = expt_groups[j].size() - 1; k >= 0; --k)
-                            {
-                                int expt_idx = expt_groups[j][k];
-                                if (experts[expt_idx].num_idle_channel > 0)
-                                {
-                                    assign_task(tasks[task_idx], experts[expt_idx], task_idx, expt_idx, env_tm);
-                                    task_grp_progress[i]++;
-                                    flag = true;
-                                    vis[task_idx] = true;
-                                    break;
-                                }
-                            }
-                        }
-                        flag = false;
-                    }
-                }
-                else if (task_grp_progress[i] < task_groups[i].size())
-                {
-                    int task_idx = task_groups[i][task_grp_progress[i]];
-                    if (tasks[task_idx].generate_tm > env_tm)
-                        continue;
-                    int task_type = tasks[task_idx].type;
-                    std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
-                        if (experts[a].busy_sum != experts[b].busy_sum)
-                            return experts[a].busy_sum < experts[b].busy_sum;
-                        else if (experts[a].process_type_duras[task_type] != experts[b].process_type_duras[task_type])
-                            return experts[a].process_type_duras[task_type] < experts[b].process_type_duras[task_type];
-                        else if (experts[a].num_idle_channel != experts[b].num_idle_channel)
-                            return experts[a].num_idle_channel > experts[b].num_idle_channel;
-                        else
-                            return experts[a].expert_id < experts[b].expert_id;
-                    });
-                    for (int expt_idx : expt_groups[task_type])
-                    {
-                        if (experts[expt_idx].num_idle_channel > 0)
-                        {
-                            assign_task(tasks[task_idx], experts[expt_idx], task_idx, expt_idx, env_tm);
-                            task_grp_progress[i]++;
-                            flag = true;
-                            break;
-                        }
+                        assign_task(tasks[task_idx], experts[expt_idx], task_idx, expt_idx, env_tm);
+                        task_grp_progress[i]++;
+                        break;
                     }
                 }
             }
@@ -440,36 +384,13 @@ std::vector<int> benchmark_solution_gen(std::vector<monte_utils::Task> tasks,
                 }
             }
         }
-
-        // check migrations
-        for (int i = 0; i < tasks.size(); ++i)
-        {
-            if (vis[i])
-                continue;
-            if (tasks[i].curr_migrate_count == 1 && tasks[i].finish_tm == -1 && (tasks[i].type == 0 || tasks[i].type == 20 || tasks[i].type == 34))
-            {
-                int assign_expert_idx = tasks[i].each_stay_expert_id[0];
-                if (experts[assign_expert_idx].process_type_duras[tasks[i].type] == monte_utils::EXPERT_NOT_GOOD_TIME)
-                {
-                    for (int expt_idx : expt_groups[tasks[i].type])
-                    {
-                        if (experts[expt_idx].num_idle_channel > 0)
-                        {
-                            release_task(experts[assign_expert_idx], i);
-                            assign_task(tasks[i], experts[expt_idx], i, expt_idx, env_tm);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
         env_tm++;
     }
 
     std::vector<std::vector<int>> result = extract_result(tasks, experts);
     save_result(result);
     double bm_score = monte_metrics::score(tasks, experts);
-    std::cout << "bm score=" << bm_score << std::endl;
+    printf("bm score=%lf\n", bm_score);
     // eatract as ga method format solution
     std::vector<int> bm_solution(monte_utils::TASK_MAX_MIGRATION * tasks.size(), -1);
     for (int i = 0; i < tasks.size(); ++i)
@@ -483,20 +404,20 @@ std::vector<int> benchmark_solution_gen(std::vector<monte_utils::Task> tasks,
 std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
                                      std::vector<monte_utils::Expert> &experts, std::vector<std::vector<int>> &expt_groups)
 {
-    std::cout << "Initial solutions..." << std::endl;
+    printf("Initial solutions...\n");
     std::vector<std::vector<int>> solutions = ga_init_solutions(tasks, expt_groups);
     solutions.emplace_back(benchmark_solution_gen(tasks, experts, expt_groups));
     std::vector<std::vector<int>> best_result;
-    std::cout << "Start GA method...." << std::endl;
+    printf("Start GA method....\n");
     for (int iter = 1; iter <= NUM_ITERS; ++iter)
     {
         std::vector<std::tuple<std::vector<std::vector<int>>, double>> result_scores;
-        std::cout << "Iter #" << iter << ": start simulations for solutions..." << std::endl;
+        printf("Iter #%05d: start simulations for solutions...\n", iter);
         result_scores.resize(solutions.size());
 #pragma omp parallel for
         for (int i = 0; i < solutions.size(); ++i)
             result_scores[i] = convert_solution_to_result(solutions[i], tasks, experts);
-        std::cout << "\tsolutions simulate finish.." << std::endl;
+        printf("\tsolutions simulate finish..\n");
         double max_score = 0, min_score = 1e8;
         int max_score_idx = 0, min_score_idx = 0;
         for (int i = 0; i < result_scores.size(); ++i)
@@ -529,7 +450,7 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
             mutation(solutions[idx], tasks, expt_groups);
         }
         solutions.erase(solutions.begin() + min_score_idx);
-        std::cout << "\tbest score=" << max_score << ", min score=" << min_score << std::endl;
+        printf("\tbest score=%lf, min score=%lf\n", max_score, min_score);
     }
     return best_result;
 }
