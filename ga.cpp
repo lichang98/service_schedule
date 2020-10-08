@@ -13,12 +13,13 @@
 #include <omp.h>
 #include <set>
 #include <tuple>
+#include <unistd.h>
 
 #define RANDOM(low, high) ((int)(rand() % (high - low + 1) + low))
 
-static const int NUM_INIT_SOLUTIONS = 128; // the initial generated ga solutions
-static const int NUM_MUTATIONS = 10;
-static const double MUTATION_RATIO = 0.1; // the ratio of the tasks that actions will be changed
+static const int NUM_INIT_SOLUTIONS = 127; // the initial generated ga solutions
+static const int NUM_MUTATIONS = 40;
+static const double MUTATION_RATIO = 0.4; // the ratio of the tasks that actions will be changed
 static const int NUM_ITERS = 1000;
 static const int MAX_TIME_LONG = 1000000;
 
@@ -279,6 +280,119 @@ std::tuple<std::vector<std::vector<int>>, double> convert_solution_to_result(std
 }
 
 /**
+ * assign a task to expert
+ */
+void assign_task(monte_utils::Task &task, monte_utils::Expert &expert, int task_idx, int expt_idx, int env_tm)
+{
+    if (task.start_process_tm == -1)
+        task.start_process_tm = env_tm;
+    task.each_stay_expert_id[task.curr_migrate_count] = expt_idx;
+    task.assign_tm[task.curr_migrate_count] = env_tm;
+    task.curr_migrate_count++;
+
+    for (int i = 0; i < monte_utils::EXPERT_MAX_PARALLEL; ++i)
+    {
+        if (expert.channels[i] == -1)
+        {
+            expert.channels[i] = task_idx;
+            expert.num_idle_channel--;
+            break;
+        }
+    }
+}
+
+/**
+ * release task from expert
+ */
+void release_task(monte_utils::Expert &expert, int task_idx)
+{
+    for (int i = 0; i < monte_utils::EXPERT_MAX_PARALLEL; ++i)
+    {
+        if (expert.channels[i] == task_idx)
+        {
+            expert.channels[i] = -1;
+            expert.num_idle_channel++;
+            break;
+        }
+    }
+}
+
+/**
+ * Generate benchmark solution for a fine start point of ga method
+ */
+std::vector<int> benchmark_solution_gen(std::vector<monte_utils::Task> tasks,
+                                        std::vector<monte_utils::Expert> experts, std::vector<std::vector<int>> &expt_groups)
+{
+    std::vector<std::vector<int>> task_groups(expt_groups.size());
+    for (int i = 0; i < tasks.size(); ++i)
+        task_groups[tasks[i].type].push_back(i);
+    std::vector<int> task_grp_progress(task_groups.size(), 0);
+    int env_tm = 0, num_left = tasks.size();
+    while (num_left > 0)
+    {
+        for (int i = 0; i < task_groups.size(); ++i)
+        {
+            if (task_grp_progress[i] < task_groups[i].size())
+            {
+                int task_idx = task_groups[i][task_grp_progress[i]];
+                if (tasks[task_idx].generate_tm > env_tm)
+                    continue;
+                int task_type = tasks[task_idx].type;
+                std::sort(expt_groups[task_type].begin(), expt_groups[task_type].end(), [&experts, task_type](const int a, const int b) -> bool {
+                    if (experts[a].process_type_duras[task_type] != experts[b].process_type_duras[task_type])
+                        return experts[a].process_type_duras[task_type] < experts[b].process_type_duras[task_type];
+                    else if (experts[a].busy_sum != experts[b].busy_sum)
+                        return experts[a].busy_sum < experts[b].busy_sum;
+                    else if (experts[a].num_idle_channel != experts[b].num_idle_channel)
+                        return experts[a].num_idle_channel > experts[b].num_idle_channel;
+                    else
+                        return experts[a].expert_id < experts[b].expert_id;
+                });
+                for (int &expt_idx : expt_groups[task_type])
+                {
+                    if (experts[expt_idx].num_idle_channel > 0)
+                    {
+                        assign_task(tasks[task_idx], experts[expt_idx], task_idx, expt_idx, env_tm);
+                        task_grp_progress[i]++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < experts.size(); ++i)
+        {
+            if (experts[i].num_idle_channel < monte_utils::EXPERT_MAX_PARALLEL)
+                experts[i].busy_sum++;
+        }
+        env_tm++;
+        // check finish
+        for (int i = 0; i < experts.size(); ++i)
+        {
+            for (int j = 0; j < monte_utils::EXPERT_MAX_PARALLEL; ++j)
+            {
+                if (experts[i].channels[j] == -1)
+                    continue;
+                int task_idx = experts[i].channels[j];
+                int process_tm = experts[i].process_type_duras[tasks[task_idx].type],
+                    pre_assign_tm = tasks[i].assign_tm[tasks[i].curr_migrate_count - 1];
+                if (pre_assign_tm + process_tm <= env_tm)
+                {
+                    release_task(experts[i], task_idx);
+                    tasks[task_idx].finish_tm = env_tm;
+                    num_left--;
+                }
+            }
+        }
+    }
+    // eatract as ga method format solution
+    std::vector<int> bm_solution(monte_utils::TASK_MAX_MIGRATION * tasks.size(), -1);
+    for (int i = 0; i < tasks.size(); ++i)
+        bm_solution[(i + 1) * monte_utils::TASK_MAX_MIGRATION - 1] = tasks[i].each_stay_expert_id[0];
+    return bm_solution;
+}
+
+/**
  * Run GA algorithm
  */
 std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
@@ -286,6 +400,7 @@ std::vector<std::vector<int>> ga_run(std::vector<monte_utils::Task> &tasks,
 {
     std::cout << "Initial solutions..." << std::endl;
     std::vector<std::vector<int>> solutions = ga_init_solutions(tasks, expt_groups);
+    solutions.emplace_back(benchmark_solution_gen(tasks, experts, expt_groups));
     std::vector<std::vector<int>> best_result;
     std::cout << "Start GA method...." << std::endl;
     for (int iter = 1; iter <= NUM_ITERS; ++iter)
@@ -338,6 +453,14 @@ int main(int argc, char const *argv[])
 {
     srand(time(NULL));
     std::vector<monte_utils::Task> tasks = monte_utils::load_tasks();
+    std::sort(tasks.begin(), tasks.end(), [](const monte_utils::Task &a, const monte_utils::Task &b) -> bool {
+        if (a.generate_tm != b.generate_tm)
+            return a.generate_tm < b.generate_tm;
+        else if (a.max_resp != b.max_resp)
+            return a.max_resp < b.max_resp;
+        else
+            return a.task_id < b.task_id;
+    });
     std::vector<monte_utils::Expert> experts = monte_utils::load_experts();
     std::vector<std::vector<int>> expt_groups = group_experts(experts, monte_utils::NUM_TASK_TYPE);
     std::vector<std::vector<int>> result = ga_run(tasks, experts, expt_groups);
