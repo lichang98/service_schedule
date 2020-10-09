@@ -20,7 +20,7 @@
 static const int NUM_INIT_SOLUTIONS = 63; // the initial generated ga solutions
 static const int NUM_MUTATIONS = 60;
 static const double MUTATION_RATIO = 0.3; // the ratio of the tasks that actions will be changed
-static const int NUM_ITERS = 1000;
+static const int NUM_ITERS = 10000;
 static const int MAX_TIME_LONG = 1000000;
 
 /**
@@ -33,7 +33,9 @@ void save_result(std::vector<std::vector<int>> &result)
     char result_tm_stamp[50];
     sprintf(result_tm_stamp, "%02d%02d%02d_%02d%02d%02d.csv", date_tm->tm_year + 1900 - 2000,
             date_tm->tm_mon + 1, date_tm->tm_mday, date_tm->tm_hour, date_tm->tm_min, date_tm->tm_sec);
-    utils::save_result(strcat(utils::PRED_RESULT_PREFIX, result_tm_stamp), result);
+    char prefix[100] = "\0";
+    strncpy(prefix, utils::PRED_RESULT_PREFIX, sizeof(utils::PRED_RESULT_PREFIX));
+    utils::save_result(strcat(prefix, result_tm_stamp), result);
 }
 
 /**
