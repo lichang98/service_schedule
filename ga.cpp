@@ -17,9 +17,9 @@
 
 #define RANDOM(low, high) ((int)((rand() % ((high) - (low) + 1)) + (low)))
 
-static const int NUM_INIT_SOLUTIONS = 4; // the initial generated ga solutions
-static const int NUM_MUTATIONS = 2;
-static const double MUTATION_RATIO = 0.3; // the ratio of the tasks that actions will be changed
+static const int NUM_INIT_SOLUTIONS = 253; // the initial generated ga solutions
+static const int NUM_MUTATIONS = 200;
+static const double MUTATION_RATIO = 0.4; // the ratio of the tasks that actions will be changed
 static const int NUM_ITERS = 10000;
 static const int MAX_TIME_LONG = 1000000;
 static const int SOLUTION_ELE_LEN = monte_utils::TASK_MAX_MIGRATION + 2; // waitting time, priority and migrations
